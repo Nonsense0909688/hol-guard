@@ -202,7 +202,16 @@ pub(super) fn exact_safe_segment_with_context(
     let stripped = without_stderr_merge(segment);
     let segment = stripped.as_ref().unwrap_or(segment);
     let Some(executable) = segment.executable.as_deref() else {
-        return false;
+        // A list item such as `OUT=build/report.json` runs no program: it binds
+        // shell variables and returns, so there is nothing to attribute and
+        // nothing to execute. The same screen the compatibility pass uses keeps
+        // the values literal and the names ordinary, so no setting here steers
+        // lookup, loading, configuration or credentials for a later item. Each
+        // later item still carries its own proof, with the literal projected
+        // into it, and a redirect would write a file rather than bind a name.
+        return segment.pipeline_index == 0
+            && !segment.text.contains(['<', '>'])
+            && crate::command_compatibility::sets_ordinary_variables(segment);
     };
     let basename = executable_basename(executable);
     let jq_filter = (basename == "jq")
@@ -242,7 +251,8 @@ pub(super) fn exact_safe_segment_with_context(
             || (basename == "kubectl"
                 && super::kubectl_reads::trusted_kubeconfig_prefix(segment, context)))
         || (executable.contains(['/', '\\'])
-            && !super::postgres_reads::trusted_pg_ctl_path(executable, context))
+            && !super::postgres_reads::trusted_pg_ctl_path(executable, context)
+            && !super::venv_program_path::environment_program(executable, context))
     {
         return false;
     }
@@ -304,6 +314,14 @@ pub(super) fn exact_safe_segment_with_context(
         "diff" => super::metadata_reads::safe_diff_arguments(&segment.arguments, context),
         "file" => super::metadata_reads::safe_file_arguments(&segment.arguments, context),
         "stat" => super::metadata_reads::safe_stat_arguments(&segment.arguments, context),
+        "dirname" | "basename" => {
+            super::path_word_reads::safe_path_word_arguments(basename, &segment.arguments)
+        }
+        "readlink" | "realpath" => super::path_word_reads::safe_resolved_path_arguments(
+            basename,
+            &segment.arguments,
+            context,
+        ),
         "cp" => {
             super::chain_temporary::copy_segments_allowed(model, segment, context)
                 && super::directory_targets::drive_targets_quoted(segment)
@@ -390,8 +408,9 @@ pub(super) fn exact_safe_segment_with_context(
             )
         }
         "sort" | "uniq" | "cut" | "tr" => {
-            segment.pipeline_index > 0
-                && super::stdin_filters::safe_arguments(basename, &segment.arguments)
+            (segment.pipeline_index > 0
+                && super::stdin_filters::safe_arguments(basename, &segment.arguments))
+                || super::stdin_filters::safe_file_arguments(basename, &segment.arguments, context)
         }
         "rg" | "grep" | "fd" => {
             (match basename {

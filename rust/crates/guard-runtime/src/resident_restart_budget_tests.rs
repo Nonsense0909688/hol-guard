@@ -1,6 +1,15 @@
-use super::*;
 #[cfg(windows)]
+use super::super::private_file::backup_path;
+use super::super::requested_stop::{record as record_requested_stop, take as take_requested_stop};
+use super::*;
 use std::fs;
+#[cfg(windows)]
+use std::io::{Read, Write};
+use std::path::PathBuf;
+
+/// Any process id will do here: the note is only ever read back for the same
+/// one, and these tests stand in for both halves of that handshake.
+const SERVING_CHILD: u32 = 4_242;
 
 #[test]
 fn repeated_updates_replace_budget_without_leaving_temporary_state() {
@@ -61,7 +70,6 @@ fn temp_scope(label: &str) -> PathBuf {
     std::fs::create_dir(&scope).unwrap();
     scope
 }
-
 fn read_budget(scope: &Path) -> RestartBudget {
     serde_json::from_slice(&std::fs::read(scope.join("restart-budget.json")).unwrap()).unwrap()
 }
@@ -182,6 +190,45 @@ fn clear_reopens_a_tripped_circuit() {
     std::fs::remove_dir_all(scope).unwrap();
 }
 
+#[test]
+fn a_held_budget_lock_reads_as_busy_and_a_spawn_waits_it_out() {
+    let scope = temp_scope("held-lock");
+    let held = acquire_budget_lock(&scope).unwrap();
+    // Windows reports this overlap as a lock violation rather than WouldBlock.
+    assert_eq!(
+        acquire_budget_lock(&scope).err().as_deref(),
+        Some("native_resident_restart_budget_busy")
+    );
+    let waiting_scope = scope.clone();
+    let (started, worker_started) = std::sync::mpsc::channel();
+    let spawn = std::thread::spawn(move || {
+        started.send(()).unwrap();
+        consume(&waiting_scope)
+    });
+    worker_started.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    // Still waiting on the held lock, not refused with a busy error.
+    assert!(!spawn.is_finished());
+    drop(held);
+    spawn.join().unwrap().unwrap();
+    assert_eq!(read_budget(&scope).attempts, 1);
+    std::fs::remove_dir_all(scope).unwrap();
+}
+
+#[test]
+fn a_spawn_out_of_time_on_a_held_budget_lock_charges_nothing() {
+    let scope = temp_scope("held-lock-deadline");
+    let held = acquire_budget_lock(&scope).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_millis(60);
+    assert_eq!(
+        consume_before(&scope, Some(deadline)).err().as_deref(),
+        Some("native_client_deadline_exceeded")
+    );
+    drop(held);
+    assert!(!scope.join("restart-budget.json").exists());
+    std::fs::remove_dir_all(scope).unwrap();
+}
+
 #[cfg(windows)]
 #[test]
 fn restart_budget_lock_retains_directory_binding_until_drop() {
@@ -262,12 +309,45 @@ const SERVED_RUN: Duration = Duration::from_secs(3);
 const INSTANT_RUN: Duration = Duration::from_millis(5);
 
 #[test]
-fn only_a_served_run_that_exited_cleanly_counts_as_healthy() {
-    assert!(healthy_exit(true, SERVED_RUN));
-    assert!(healthy_exit(true, Duration::from_millis(1_000)));
-    assert!(!healthy_exit(true, Duration::from_millis(999)));
-    assert!(!healthy_exit(false, SERVED_RUN));
-    assert!(!healthy_exit(false, INSTANT_RUN));
+fn only_a_served_run_that_exited_cleanly_counts_as_orderly() {
+    assert!(orderly_exit(true, SERVED_RUN, false));
+    assert!(orderly_exit(true, Duration::from_millis(1_000), false));
+    assert!(!orderly_exit(true, Duration::from_millis(999), false));
+    assert!(!orderly_exit(false, SERVED_RUN, false));
+    assert!(!orderly_exit(false, INSTANT_RUN, false));
+}
+
+#[test]
+fn a_run_that_was_asked_to_stop_is_orderly_however_briefly_it_lived() {
+    assert!(orderly_exit(true, INSTANT_RUN, true));
+    assert!(orderly_exit(true, Duration::from_millis(1), true));
+    // Being asked to stop does not excuse ending badly.
+    assert!(!orderly_exit(false, INSTANT_RUN, true));
+}
+
+#[test]
+fn repeated_requested_stops_never_open_the_restart_circuit() {
+    // The shape that took every prompt down: a second runtime sharing the
+    // guard home stops this one's resident the instant it starts, over and
+    // over inside one window. Each of those is a complete lifecycle.
+    let scope = temp_scope("requested-stop-loop");
+    for _ in 0..(MAX_RESTARTS_PER_WINDOW * 3) {
+        consume(&scope).expect("a stop that was asked for is never a restart");
+        record_requested_stop(&scope, SERVING_CHILD).unwrap();
+        backdate_window(&scope, INSTANT_RUN.as_millis() as u64 + 1_000);
+        let stop_requested = take_requested_stop(&scope, SERVING_CHILD);
+        assert!(stop_requested);
+        release_after_exit(
+            &scope,
+            orderly_exit(true, INSTANT_RUN, stop_requested),
+            INSTANT_RUN,
+        )
+        .unwrap();
+        assert_eq!(read_budget(&scope).attempts, 0);
+    }
+    consume(&scope).expect("the circuit stays closed after repeated requested stops");
+
+    std::fs::remove_dir_all(scope).unwrap();
 }
 
 #[test]
@@ -310,7 +390,7 @@ fn a_resident_that_exits_zero_immediately_keeps_its_restart_charge() {
     let scope = temp_scope("instant-success");
     for _ in 0..MAX_RESTARTS_PER_WINDOW {
         consume(&scope).unwrap();
-        release_after_exit(&scope, true, INSTANT_RUN).unwrap();
+        release_after_exit(&scope, orderly_exit(true, INSTANT_RUN, false), INSTANT_RUN).unwrap();
     }
     assert_eq!(
         consume(&scope).unwrap_err(),

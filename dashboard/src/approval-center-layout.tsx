@@ -23,6 +23,9 @@ import type {
 } from "./guard-types";
 import { useGuardUpdate } from "./guard-update-panel";
 import { updateSettings } from "./guard-api";
+import { dashboardEmbedsInDesktop } from "./desktop-embed";
+import { GuardUpdateBanner, readDismissedDesktopUpdateVersion } from "./guard-update-banner";
+import { desktopUpdateBannerModel } from "./guard-update-copy";
 import { WatchProtectionBanner } from "./watch-protection-banner";
 import { turnProtectionOnUpdate, watchBannerModel } from "./harness-posture-ui";
 
@@ -81,6 +84,7 @@ type LayoutProps = {
   supplyChainHubContent?: ReactNode;
   policyContent?: ReactNode;
   aboutContent?: ReactNode;
+  releasesContent?: ReactNode;
   protectionRepairContent?: ReactNode;
   onGoHome: () => void;
   onNavigate: (pathname: string) => void;
@@ -223,6 +227,9 @@ function renderViewContent(props: LayoutProps): ReactNode {
   if (props.view === "about") {
     return props.aboutContent ?? null;
   }
+  if (props.view === "releases") {
+    return props.releasesContent ?? null;
+  }
   if (props.view === "policy") {
     return props.policyContent ?? null;
   }
@@ -281,6 +288,18 @@ export function ApprovalCenterLayout(props: LayoutProps) {
     onSetUpdateChannel,
   } = useGuardUpdate({ onReconnected: props.onGuardReconnected });
 
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(
+    () => readDismissedDesktopUpdateVersion(),
+  );
+  const handleDismissUpdateBanner = useCallback((version: string) => {
+    setDismissedUpdateVersion(version);
+  }, []);
+  const updateBannerModel = desktopUpdateBannerModel(
+    updateStatus,
+    dashboardEmbedsInDesktop(),
+    dismissedUpdateVersion,
+  );
+
   return (
     <div className="min-h-screen bg-white text-brand-dark">
       <ShellNavigation
@@ -319,6 +338,14 @@ export function ApprovalCenterLayout(props: LayoutProps) {
       >
         <main id="main-content" className="guard-shell-main flex-1" tabIndex={-1}>
           <div className="guard-shell-workspace" data-view={props.view}>
+            {updateBannerModel ? (
+              <div className="mb-4">
+                <GuardUpdateBanner
+                  model={updateBannerModel}
+                  onDismiss={handleDismissUpdateBanner}
+                />
+              </div>
+            ) : null}
             {props.view === "inbox"
               && props.runtime.kind === "ready"
               && watchBannerModel(props.runtime.snapshot) !== null ? (

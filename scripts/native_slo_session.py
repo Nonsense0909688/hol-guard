@@ -19,9 +19,11 @@ from http.client import HTTPConnection, HTTPException, HTTPResponse
 from pathlib import Path
 from typing import cast
 
-from codex_plugin_scanner.guard.adapters.claude_daemon_hook_transport import authenticated_claude_hook_response
-from codex_plugin_scanner.guard.adapters.codex_daemon_hook_auth import _DaemonResponseError
-from codex_plugin_scanner.guard.adapters.codex_daemon_hook_transport import _daemon_response_once
+from codex_plugin_scanner.guard.adapters._modules.claude.claude_daemon_hook_transport import (
+    authenticated_claude_hook_response,
+)
+from codex_plugin_scanner.guard.adapters._modules.codex.codex_daemon_hook_auth import _DaemonResponseError
+from codex_plugin_scanner.guard.adapters._modules.codex.codex_daemon_hook_transport import _daemon_response_once
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.native_resident_client import close_native_resident_clients
 from codex_plugin_scanner.guard.native_runtime import native_runtime_health
@@ -313,7 +315,9 @@ class AdapterSession:
     """One private daemon and workspace, with deterministic resident cleanup."""
 
     def __init__(self, runtime: Path) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="hol-guard-slo-")
+        # A resident that is still exiting can leave files behind for a moment;
+        # a leftover scratch directory must not discard a finished measurement.
+        self.temporary = tempfile.TemporaryDirectory(prefix="hol-guard-slo-", ignore_cleanup_errors=True)
         # Keep the synthetic paths canonical. macOS may expose ``/tmp`` as
         # ``/private/tmp`` after the daemon validates a hook workspace; using
         # one spelling avoids registering the same workspace twice and

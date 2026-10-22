@@ -21,8 +21,7 @@ pub fn compiler_info() -> Value {
 }
 
 #[cfg(not(guard_source_bootstrap))]
-static EXPORTED_TRUST_MAP: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/trust-class-map.v1.json"));
+static EXPORTED_TRUST_MAP: &[u8] = guard_command_catalog_data::TRUST_MAP_JSON;
 // The bootstrap shadow lib produces no packaged output; the empty slice keeps
 // `include_bytes!` valid and `export-trust` fails closed like the embedded
 // program and catalog bootstrap paths.
@@ -30,10 +29,7 @@ static EXPORTED_TRUST_MAP: &[u8] =
 static EXPORTED_TRUST_MAP: &[u8] = &[];
 
 #[cfg(not(guard_source_bootstrap))]
-static EXPORTED_BUILD: &[u8] = include_bytes!(concat!(
-    env!("OUT_DIR"),
-    "/native-command-build.v1.json.zst"
-));
+static EXPORTED_BUILD: &[u8] = guard_command_catalog_data::BUILD_JSON_ZST;
 
 fn exported_build_bytes() -> &'static [u8] {
     #[cfg(not(guard_source_bootstrap))]
@@ -43,8 +39,8 @@ fn exported_build_bytes() -> &'static [u8] {
             .get_or_init(|| {
                 crate::packaged_blob::decode(
                     EXPORTED_BUILD,
-                    env!("GUARD_PACKAGED_BUILD_LEN"),
-                    env!("GUARD_PACKAGED_BUILD_SHA256"),
+                    guard_command_catalog_data::BUILD_JSON_LEN,
+                    guard_command_catalog_data::BUILD_JSON_SHA256,
                 )
             })
             .as_ref()
@@ -130,6 +126,11 @@ pub fn is_command(arguments: &[String]) -> bool {
         | "compile-bootstrap-stream"
         | "export-trust"
         | "export-built"
+        | "authoring-context"
+        | "authoring-index"
+        | "authoring-admission"
+        | "bundle-metadata"
+        | "bundle-compatibility"
         | "schema"
         | "descriptor-schema"
         | "github-classify"
@@ -148,6 +149,15 @@ pub fn is_command(arguments: &[String]) -> bool {
 }
 
 fn run(arguments: &[String]) -> Result<Value, &'static str> {
+    if arguments == ["bundle-compatibility"] {
+        return crate::bundle_metadata::compatibility_stream();
+    }
+    if arguments == ["authoring-index"] {
+        return crate::native_command_program::source::authoring_index();
+    }
+    if arguments == ["authoring-context"] {
+        return crate::native_command_program::source::authoring_context();
+    }
     if arguments == ["compiler-info"] {
         return Ok(compiler_info());
     }
@@ -200,7 +210,14 @@ fn run(arguments: &[String]) -> Result<Value, &'static str> {
     }
     if !matches!(
         operation,
-        "validate" | "compile" | "check" | "test" | "compare" | "evaluate-batch"
+        "validate"
+            | "compile"
+            | "check"
+            | "test"
+            | "compare"
+            | "evaluate-batch"
+            | "authoring-admission"
+            | "bundle-metadata"
     ) || arguments.len() != if operation == "check" { 2 } else { 1 }
     {
         return Err("command_source_usage_expected_schema_validate_compile_check_or_test");
@@ -220,6 +237,12 @@ fn run(arguments: &[String]) -> Result<Value, &'static str> {
         .map_err(|_| "command_source_input_read_failed")?;
     if bytes.len() > MAX_SOURCE_INPUT_BYTES {
         return Err("command_source_bytes_invalid");
+    }
+    if operation == "bundle-metadata" {
+        return crate::bundle_metadata::evaluate(&bytes);
+    }
+    if operation == "authoring-admission" {
+        return crate::native_command_program::source::authoring_admission(&bytes);
     }
     if operation == "test" {
         return run_fixtures(&bytes);

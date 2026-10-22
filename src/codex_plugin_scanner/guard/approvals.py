@@ -23,10 +23,10 @@ from .adapters import get_adapter
 from .adapters.base import HarnessContext
 from .approval_gate import ApprovalGateGrant, ApprovalGateInput, require_approval_decision
 from .approval_once_eligibility import requires_local_once_approval
+from .approval_persist_select_support import resolve_request_persistence_selection
 from .approval_resolution import require_resolvable_approval_request
 from .approval_scope_support import (
     RETRY_CANNOT_REUSE_APPROVAL,
-    IneligibleApprovalScopeError,
     apply_scope_surfaces,
     package_request_portable_workspace_scope,
     request_scope_observation,
@@ -459,8 +459,13 @@ def apply_approval_resolution(
         raise ApprovalRequestNotFoundError(f"Unknown approval request: {request_id}")
     if request["status"] != "pending":
         raise ApprovalRequestAlreadyResolvedError(f"Approval request already resolved: {request_id}")
-    require_resolvable_approval_request(request)
-    resolved_at = now or _now()
+    require_resolvable_approval_request(request, guard_home=store.guard_home)
+    from .native_bash_review_preflight import require_verified_bash_review
+
+    require_verified_bash_review(store, request, require_execution=action == "allow" or persist_policy is True)
+    from .store_base import _canonical_utc_timestamp
+
+    resolved_at = _canonical_utc_timestamp(now or _now())
     temporary_mcp_selection: TemporaryMcpGrantSelection | None = None
     if (mcp_grant_target is None) != (mcp_grant_duration is None):
         raise ValueError("incomplete_temporary_mcp_approval")
@@ -489,41 +494,34 @@ def apply_approval_resolution(
             duration=local_tool_grant_duration,
             now=resolved_at,
         )
-    contract, exact_token = request_scope_observation(request)
+    contract, exact_token = (
+        request_scope_observation(request, guard_home=store.guard_home)
+        if request.get("artifact_type") == "native_bash_request"
+        else request_scope_observation(request)
+    )
     selection = resolve_request_scope_selection(
         request,
         action=action,
         requested_scope=scope,
         contract_version=scope_contract_version,
         contract_digest=scope_contract_digest,
-        contract=contract,
+        guard_home=store.guard_home,
     )
     requested_scope = selection.requested_scope
     scope = selection.applied_scope
-    if selection.warning is not None:
-        persist_policy = None
-    elif scope == "artifact" and persist_policy is True:
-        if scope_contract_version is not None:
-            if not contract.exact_action_persistence_eligible:
-                raise IneligibleApprovalScopeError(
-                    "saved_allow_scope_ineligible" if action == "allow" else "saved_block_scope_ineligible",
-                    contract,
-                    action="allow" if action == "allow" else "block",
-                    requested_scope=scope,
-                )
-        else:
-            persist_policy = None
-    if (
-        action == "allow"
-        and not contract.can_run_once
-        and not (scope == "artifact" and persist_policy is True and contract.can_persist_exact_version)
-    ):
-        raise IneligibleApprovalScopeError(
-            "execution_binding_unavailable",
-            contract,
-            action="allow",
-            requested_scope=scope,
-        )
+    # The resident owns both eligibility gates: whether this resolution may be
+    # remembered against the request's exact action, and whether an allow has
+    # any binding left to run under.
+    persist_policy = resolve_request_persistence_selection(
+        request,
+        action=action,
+        applied_scope=scope,
+        persist_policy=persist_policy,
+        scope_narrowed=selection.warning is not None,
+        contract_version=scope_contract_version,
+        contract_digest=scope_contract_digest,
+        guard_home=store.guard_home,
+    )
     request_artifact_id = _string_or_none(request.get("artifact_id"))
     request_artifact_hash = _string_or_none(request.get("artifact_hash"))
     resolved_workspace = resolve_request_workspace_scope(request, workspace) if scope == "workspace" else None
@@ -1378,6 +1376,7 @@ def wait_for_approval_requests(
     request_ids: list[str],
     timeout_seconds: int,
     poll_interval: float = 0.01,
+    stop_on_missing: bool = False,
 ) -> dict[str, object]:
     if not request_ids:
         return {
@@ -1389,6 +1388,10 @@ def wait_for_approval_requests(
     deadline = time.monotonic() + max(timeout_seconds, 0)
     while True:
         items = [store.get_approval_request(request_id) for request_id in request_ids]
+        if stop_on_missing:
+            missing = [request_id for request_id, item in zip(request_ids, items, strict=True) if item is None]
+            if missing:
+                return {"resolved": False, "missing_request_ids": missing, "items": []}
         resolved_items = [item for item in items if isinstance(item, dict) and item.get("status") == "resolved"]
         pending_ids = [
             request_id
@@ -1988,8 +1991,9 @@ def bulk_allow_read_only_once(
     now: str | None = None,
 ) -> dict[str, object]:
     from .approval_gate import public_config
+    from .store_base import _canonical_utc_timestamp
 
-    resolved_at = now or _now()
+    resolved_at = _canonical_utc_timestamp(now or _now())
     gate = public_config(store.guard_home, now=resolved_at)
     if not gate.enabled or not gate.configured:
         raise ValueError("bulk_approve_gate_required")

@@ -5,12 +5,24 @@ use serde_json::Value;
 
 mod approval_contracts;
 pub use approval_contracts::*;
+mod approval_extension_recommendation;
+pub use approval_extension_recommendation::*;
 mod approval_gate;
 pub use approval_gate::*;
 mod approval_reuse;
 pub use approval_reuse::*;
 mod composio_role;
 pub use composio_role::*;
+mod extension_allow_hint;
+pub use extension_allow_hint::*;
+mod extension_control;
+pub use extension_control::*;
+mod extension_control_mutation;
+pub use extension_control_mutation::*;
+mod extension_control_prepared;
+pub use extension_control_prepared::*;
+mod extension_control_preview;
+pub use extension_control_preview::*;
 mod github_cli_classify;
 pub use github_cli_classify::*;
 mod github_workflow_prepare;
@@ -66,20 +78,34 @@ mod local_cli_identity;
 pub use local_cli_identity::*;
 mod approval_scope;
 pub use approval_scope::*;
+mod approval_resolution_eligibility;
+pub use approval_resolution_eligibility::*;
+mod approval_persist_select;
+pub use approval_persist_select::*;
+mod approval_scope_select;
+pub use approval_scope_select::*;
+mod artifact_content_hash;
+pub use artifact_content_hash::*;
+mod hook_artifact_facts;
+pub use hook_artifact_facts::*;
 mod hook_render;
 pub use hook_render::*;
 mod approval_proof;
 mod cursor_observer_proof;
+mod extension_control_authority;
 mod hook_authority_state;
 mod policy_integrity_rows;
 pub use approval_proof::*;
 pub use cursor_observer_proof::*;
+pub use extension_control_authority::*;
 pub use hook_authority_state::*;
 pub use policy_integrity_rows::*;
 mod hook_adapter;
 pub use hook_adapter::*;
 mod hook_artifact_compose;
 pub use hook_artifact_compose::*;
+mod hook_artifact_compose_policy_tail;
+pub use hook_artifact_compose_policy_tail::*;
 mod consumer_artifact_compose;
 pub use consumer_artifact_compose::*;
 mod consumer_artifact_project;
@@ -148,6 +174,20 @@ mod generic_hook_payload;
 pub use generic_hook_payload::*;
 mod hook_decision;
 pub use hook_decision::*;
+mod hook_decision_artifact_finalize;
+pub use hook_decision_artifact_finalize::*;
+mod hook_decision_artifact_reuse_step;
+pub use hook_decision_artifact_reuse_step::*;
+mod hook_route;
+pub use hook_route::*;
+mod hook_pretool_floor;
+pub use hook_pretool_floor::*;
+mod hook_containment_route;
+pub use hook_containment_route::*;
+mod claude_permission_verdict;
+pub use claude_permission_verdict::*;
+mod hook_decision_permission_persist;
+pub use hook_decision_permission_persist::*;
 mod daemon_handler;
 pub use daemon_handler::*;
 mod daemon_route;
@@ -156,6 +196,16 @@ mod native_exact_action;
 pub use native_exact_action::*;
 mod native_bash_subject;
 pub use native_bash_subject::*;
+mod native_script_dependencies;
+pub use native_script_dependencies::*;
+mod native_bash_launch;
+pub use native_bash_launch::*;
+mod native_bash_review;
+pub use native_bash_review::*;
+mod native_bash_activity;
+pub use native_bash_activity::*;
+mod native_bash_ack;
+pub use native_bash_ack::*;
 
 mod workflow_capability;
 pub use workflow_capability::*;
@@ -198,6 +248,16 @@ mod business_dispatch_receipt;
 pub use business_dispatch_receipt::*;
 mod skill_workflow_preflight;
 pub use skill_workflow_preflight::*;
+mod runtime_artifact_identity;
+pub use runtime_artifact_identity::*;
+mod tool_action_identity;
+pub use tool_action_identity::*;
+mod verified_read_decision;
+pub use verified_read_decision::*;
+mod inventory_source_evidence;
+pub use inventory_source_evidence::*;
+mod command_pack_record;
+pub use command_pack_record::*;
 
 pub const NATIVE_PROTOCOL_VERSION: u16 = 1;
 pub const GUARD_HOOK_ENVELOPE_V2_SCHEMA: &str = "guard-hook-envelope.v2";
@@ -268,6 +328,12 @@ pub struct GuardHookEdgeResultV2 {
     /// the resident so no other layer interprets the verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_response: Option<Value>,
+    /// Which containment step `result` takes (`none`, `sink` or `grant`; only
+    /// a PreToolUse answer is ever routed), the same answer the
+    /// `containment_route` decision gives, so a hook routes the call without a
+    /// second round trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containment_route: Option<String>,
     /// Rust-owned decision evidence.  The Python edge may only transport it
     /// to a non-authoritative asynchronous consumer.
     pub receipt: NativeHookDecisionReceiptV1,

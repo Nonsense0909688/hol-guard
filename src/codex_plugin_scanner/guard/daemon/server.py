@@ -23,17 +23,22 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, TypeAlias, TypedDict, cast
-from urllib.parse import parse_qs, parse_qsl, urlparse
+from urllib.parse import ParseResult, parse_qs, parse_qsl, urlparse
 
 from ...version import __version__
 from ..adapters import get_adapter
-from ..aibom_cli import _AIBOM_AUTO_SYNC_INTERVAL_SECONDS, sync_aibom_snapshots_if_due
+from ..aibom_cli import (
+    _AIBOM_AUTO_SYNC_INTERVAL_SECONDS,
+    remember_user_inventory_if_due,
+    sync_aibom_snapshots_if_due,
+)
 from ..approval_gate import (
     ApprovalGateError,
     require_high_risk,
 )
 from ..approval_gate import input_from_mapping as approval_gate_input_from_mapping
 from ..browser_opener import open_browser_url
+from ..catalog_delivery import lifecycle
 from ..codex_live_decision import complete_codex_live_decision, resolve_codex_live_allow_authority
 from ..codex_live_decision_revalidation import revalidate_codex_live_allow
 from ..config import (
@@ -76,13 +81,14 @@ from ..native_directory_trust import (
 )
 from ..native_guard_store import NativeGuardStoreUnavailable
 from ..native_hook_evidence_writer import NativeHookEvidenceWriter, unreachable_writer_stats
+from ..native_policy_snapshot_constants import NativePolicySnapshotError
 from ..native_resident_revival import native_route_unavailable_body
 from ..native_resident_watchdog import start_native_resident_watchdog
 from ..native_runtime_request_scope import scoped_hook_post
 from ..package_firewall_action_rate_limit import PackageFirewallActionRateLimiter
 from ..runtime.approval_attention import ApprovalAttentionCoordinator
 from ..runtime.cloud_review_sync import CloudReviewSyncWorker, start_cloud_sync_sync_worker, stop_cloud_sync_sync_worker
-from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
+from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY, CommandSafetyExtensionRegistry
 from ..runtime.extension_control_authority import ExtensionControlAuthorityView
 from ..runtime.extension_control_runtime import (
     ExtensionControlRuntime,
@@ -95,6 +101,7 @@ from ..runtime.runner import (
     GuardSyncAuthorizationExpiredError,
     GuardSyncNotConfiguredError,
     _resolve_guard_sync_auth_context,
+    sync_network_protection_bundle_best_effort,
     sync_supply_chain_bundle,
 )
 from ..runtime.surface_server import GuardSurfaceRuntime
@@ -112,6 +119,8 @@ from .aibom_inventory_persist import persist_aibom_inventory_context
 from .audit_persistence import NOT_PERSISTED as AUDIT_NOT_PERSISTED
 from .audit_persistence import WRITTEN as AUDIT_WRITTEN
 from .audit_persistence import AuditPersistence
+from .background_diagnostics import failure_detail, record_background_event
+from .background_diagnostics import install_sink as install_background_sink
 from .bounded_http import BoundedThreadingHTTPServer
 from .catalog_read_v2 import CATALOG_V2_PREFIX, serve_catalog_read_v2
 from .command_activity_api import (
@@ -160,6 +169,13 @@ from .manager import (
     release_guard_daemon_owner_lock,
     write_guard_daemon_state,
 )
+from .release_feed_read import (
+    MAX_RELEASE_FEED_PAGE_SIZE,
+    RELEASE_FEED_REQUEST_INVALID,
+    RELEASE_FEED_UNAVAILABLE,
+    release_feed_projection,
+    release_feed_rollout_enabled,
+)
 from .request_executor import BoundedRequestExecutor as _BoundedRequestExecutor
 from .runtime_heartbeat import RuntimeHeartbeatWriter
 from .runtime_hook_deadline import PROMPT_ADMISSION_SECONDS, RuntimeHookDeadline, remaining_hint_from_payload
@@ -202,8 +218,29 @@ from .sponsored_discovery_settings import (
 )
 from .startup_phase import flush_pending_phases, record_phase_since, timed_phase
 
+
 # Local daemon routes. The Cloud paths stay in the read module and are the
 # only paths relayed upstream.
+def _release_feed_number(values: list[str] | None, *, default: int) -> int | None:
+    """Read one bounded positive integer from a query parameter.
+
+    A parameter that is present but unreadable is a caller mistake, not a
+    reason to silently serve a different page.
+    """
+
+    if not values:
+        return default
+    # ``str.isdigit`` is true for characters such as "²" that ``int`` refuses,
+    # so the page parameter is read as ASCII digits and nothing else.
+    if len(values) != 1 or len(values[0]) > 6 or not values[0].isascii() or not values[0].isdigit():
+        return None
+    parsed = int(values[0])
+    return parsed if parsed >= 1 else None
+
+
+_LOCAL_RELEASES_PREFIX = "/v1/releases/"
+_LOCAL_RELEASES_INDEX = "/v1/releases/index"
+_LOCAL_RELEASES_DETAIL = "/v1/releases/release"
 _LOCAL_DISCOVERY_PREFIX = "/v1/discovery/extensions/"
 _LOCAL_DISCOVERY_PLACEMENTS = "/v1/discovery/extensions/placements"
 _LOCAL_DISCOVERY_SETTINGS = "/v1/discovery/extensions/settings"
@@ -215,6 +252,10 @@ _LOCAL_DISCOVERY_MEASUREMENT = {
 _LOCAL_DASHBOARD_SESSION_REFRESH_GRACE_SECONDS = 7 * 24 * 60 * 60
 _DEFAULT_HEADLESS_CLOUD_SYNC_INTERVAL_SECONDS = 30.0
 _DEFAULT_HEADLESS_CLOUD_SYNC_BACKOFF_SECONDS = 10.0
+
+
+class _InstalledAuthorityMigrationError(Exception):
+    """The installed release's command-pack authority is not migrated yet."""
 
 
 class _HookPathValidationError(ValueError):
@@ -265,10 +306,6 @@ class _HookDirectories:
             raise _HookPathValidationError(_reported_hook_parameter(parameter), verdict.reason)
         return verdict.path
 
-
-# A fail-safe hook answer stands in for a runtime that has just failed, so it
-# waits only this long for the directories it reports.
-_FAIL_SAFE_DIRECTORY_TRUST_SECONDS = 0.5
 
 _MAX_CONCURRENT_DAEMON_REQUESTS = 32
 _MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 8
@@ -346,6 +383,11 @@ _PEER_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbor
 
 class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
     request_queue_size = _MAX_CONCURRENT_DAEMON_CONNECTIONS
+    # Set while the installed release's authority still awaits migration.
+    _installed_authority_pending: bool = False
+    # Set while the control API serves the core registry because startup could
+    # not read the installed authority.
+    _extension_control_on_core_registry: bool = False
     store: GuardStore
     runtime: GuardSurfaceRuntime
     auth_token: str
@@ -589,13 +631,32 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
                 capture_writer=self.codex_binding_capture_writer,
             )
             bind_hook_counter_sink(self.hook_worker, getattr(self, "diagnostics", None))
-            self.extension_control_runtime = ExtensionControlRuntime(self._startup_extension_control_view())
+            from ..catalog_delivery.projection import capture
+
+            try:
+                self._migrate_installed_authority()
+                _, control_registry, _ = capture(self.store)
+                startup_view = self._startup_extension_control_view(control_registry)
+            except (_InstalledAuthorityMigrationError, NativePolicySnapshotError):
+                # An activation record this build cannot authenticate, such as
+                # one written under a newer schema, or an installed release whose
+                # authority could not be migrated, activates nothing. Start on
+                # the core registry with a tampered authority so every hook
+                # fails closed, rather than taking hook protection down with
+                # the daemon. The refresh loop keeps this snapshot until the
+                # record reads again.
+                control_registry = BUILT_IN_COMMAND_EXTENSION_REGISTRY
+                startup_view = self.store._tampered_view(control_registry.catalog_digest)
+                self._extension_control_on_core_registry = True
+            self.extension_control_runtime = ExtensionControlRuntime(startup_view)
             self.extension_control_api = ExtensionControlApiService(
                 store=self.store,
-                registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                registry=control_registry,
                 runtime=self.extension_control_runtime,
             )
-            self.local_cli_api = LocalCliApiService(store=self.store)
+            self.local_cli_api = LocalCliApiService(
+                store=self.store, record_exception=self.diagnostics.record_exception
+            )
             self.approval_attention = ApprovalAttentionCoordinator(
                 store=self.store,
                 runtime=self.runtime,
@@ -629,7 +690,29 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
                 self.codex_binding_capture_writer.stop_capture()
             raise
 
-    def _startup_extension_control_view(self) -> ExtensionControlAuthorityView:
+    def _migrate_installed_authority(self) -> None:
+        """Admit the installed release, or report why it cannot be admitted yet.
+
+        A failure leaves the migration pending. The daemon then starts on a
+        tampered authority, so every hook fails closed instead of the daemon
+        exiting, and each refresh retries it before reading anything newer.
+        """
+
+        try:
+            self.store.migrate_installed_command_pack_authority()
+        except Exception as error:
+            self._installed_authority_pending = True
+            # A packaged daemon has no stderr sink, so this warning reached
+            # nothing on the installs that needed it most. The diagnostics log
+            # is the support artifact; record the failure there as well.
+            record_background_event("installed_authority_migration_failed", failure_detail(error))
+            _LOGGER.warning("Installed command-pack authority could not be migrated: %s", error, exc_info=True)
+            raise _InstalledAuthorityMigrationError from error
+        self._installed_authority_pending = False
+
+    def _startup_extension_control_view(
+        self, registry: CommandSafetyExtensionRegistry
+    ) -> ExtensionControlAuthorityView:
         """Read the authority for startup without letting a busy lease stop the daemon.
 
         A lease timeout reports that the authority was not read, never that it
@@ -654,42 +737,65 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
         deadline = time.monotonic() + AUTHORITY_LOCK_TIMEOUT_SECONDS
         with suppress(NativeCommandControlAuthorityUnavailableError):
             return self.store.read_extension_control_authority_for_registry(
-                BUILT_IN_COMMAND_EXTENSION_REGISTRY, lock_timeout_seconds=AUTHORITY_LOCK_TIMEOUT_SECONDS / 2
+                registry, lock_timeout_seconds=AUTHORITY_LOCK_TIMEOUT_SECONDS / 2
             )
         remaining = deadline - time.monotonic()
         if remaining > 0.0:
             with suppress(NativeCommandControlAuthorityUnavailableError, NativeCommandControlMutationRequiredError):
                 return self.store.read_extension_control_authority_for_registry(
-                    BUILT_IN_COMMAND_EXTENSION_REGISTRY, read_only=True, lock_timeout_seconds=remaining
+                    registry, read_only=True, lock_timeout_seconds=remaining
                 )
-        return self.store.extension_control_authority_unreadable_view(
-            BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
-        )
+        return self.store.extension_control_authority_unreadable_view(registry.catalog_digest)
 
     def refresh_extension_control_runtime(self) -> ExtensionControlRuntimeSnapshot:
+        from ..catalog_delivery.projection import capture, require_current
         from ..native_command_control_authority_io import (
             NativeCommandControlAuthorityUnavailableError,
             NativeCommandControlMutationRequiredError,
+            hold_command_control_authority_lock,
         )
+        from ..native_command_control_authority_store import _key
 
+        def read(*, shared: bool) -> ExtensionControlRuntimeSnapshot:
+            _, registry, activation_digest = capture(self.store)
+            with hold_command_control_authority_lock(self.store.guard_home, shared=shared):
+                require_current(self.store, _key(self.store), activation_digest)
+                view = self.store.read_extension_control_authority_for_registry(registry, read_only=shared)
+                snapshot = self.extension_control_runtime.refresh(view)
+            # The runtime now holds a view read for `registry`. Serve the same
+            # registry from the control API, whether startup fell back to the
+            # core one or a pack activation landed after startup (an upgrade
+            # settling its transition, another process's activation).
+            # Otherwise the effective controls and the catalog read model
+            # report different digests until the daemon restarts. Rebind after
+            # the authority lease is released: apply() takes the API lock
+            # before that lease. The API skips the rebind if an apply installed
+            # a newer snapshot in the meantime.
+            if (
+                self._extension_control_on_core_registry
+                or registry.catalog_digest != self.extension_control_api.catalog_digest
+            ) and self.extension_control_api.rebind_registry(registry, installed=snapshot):
+                self._extension_control_on_core_registry = False
+            return snapshot
+
+        if self._installed_authority_pending:
+            try:
+                self._migrate_installed_authority()
+            except _InstalledAuthorityMigrationError:
+                # Nothing newer is admitted until the release is migrated.
+                return self.extension_control_runtime.current()
         try:
-            view = self.store.read_extension_control_authority_for_registry(
-                BUILT_IN_COMMAND_EXTENSION_REGISTRY, read_only=True
-            )
+            try:
+                return read(shared=True)
+            except NativeCommandControlMutationRequiredError:
+                # Release the shared lease before migration and recapture the
+                # active projection under the exclusive mutation fence.
+                return read(shared=False)
         except NativeCommandControlAuthorityUnavailableError:
             # Nothing was read, so there is nothing to refresh from. Keeping the
             # snapshot already installed beats replacing a known authority with
             # the absence of a reading.
             return self.extension_control_runtime.current()
-        except NativeCommandControlMutationRequiredError:
-            # Release the shared read before a migration takes an exclusive
-            # lease and re-verifies authority. Routine refreshes must coexist
-            # with the native decision's shared mutation fence.
-            try:
-                view = self.store.read_extension_control_authority_for_registry(BUILT_IN_COMMAND_EXTENSION_REGISTRY)
-            except NativeCommandControlAuthorityUnavailableError:
-                return self.extension_control_runtime.current()
-        return self.extension_control_runtime.refresh(view)
 
     def process_request(self, request: Any, client_address: Any) -> None:
         request_socket = cast(socket.socket, request)
@@ -1466,6 +1572,9 @@ class _GuardDaemonHandler(
         if parsed.path.startswith("/v1/") and not self._header_token_is_valid():
             self._write_unauthorized(extra_headers=self._cors_headers_for_request())
             return
+        if parsed.path.startswith(_LOCAL_RELEASES_PREFIX):
+            self._serve_release_feed_read(parsed)
+            return
         if self._serve_dashboard_runtime_read(parsed, path_parts, store):
             return
         if self._serve_dashboard_records_read(parsed, path_parts, store):
@@ -2019,7 +2128,6 @@ class _GuardDaemonHandler(
                     default_harness=default_harness,
                     reason="HOL Guard could not authenticate the local hook payload.",
                     reason_code="invalid_hook_payload_reference",
-                    hook_deadline=hook_deadline.expires_at,
                 )
             )
             return
@@ -2036,7 +2144,6 @@ class _GuardDaemonHandler(
                     params,
                     default_harness=default_harness,
                     reason_code=reservation_reason,
-                    hook_deadline=hook_deadline.expires_at,
                 )
             )
             return
@@ -2146,7 +2253,6 @@ class _GuardDaemonHandler(
         *,
         default_harness: str,
         reason_code: RuntimeHookAdmissionReason | None = None,
-        hook_deadline: float | None = None,
     ) -> dict[str, object]:
         resolved_reason_code = reason_code or "daemon_hook_queue_capacity"
         if resolved_reason_code == "daemon_hook_deadline_exhausted":
@@ -2159,7 +2265,6 @@ class _GuardDaemonHandler(
             default_harness=default_harness,
             reason=reason,
             reason_code=resolved_reason_code,
-            hook_deadline=hook_deadline,
         )
 
     def _runtime_hook_fail_safe_response(
@@ -2170,70 +2275,18 @@ class _GuardDaemonHandler(
         default_harness: str,
         reason: str,
         reason_code: str,
-        hook_deadline: float | None = None,
     ) -> dict[str, object]:
         runtime_harness = self._optional_string(params.get("runtime-harness", [None])[-1])
         harness = (runtime_harness or default_harness).strip().lower().replace("_", "-")
         event = self._optional_string(payload.get("hook_event_name", payload.get("event"))) or "PreToolUse"
-        daemon_server = getattr(self, "server", None)
-        workspace_path, home_path = self._validated_fail_safe_hook_paths(params, hook_deadline=hook_deadline)
-        guard_home = None if daemon_server is None else cast(_GuardDaemonHttpServer, daemon_server).store.guard_home
-        from ..native_policy_snapshot_acked import recording_only_from_acked_snapshot
         from .hook_availability_policy import availability_harness_response
 
-        payload_dict = dict(payload) if isinstance(payload, Mapping) else {}
         return availability_harness_response(
-            payload_dict,
             harness=harness,
             event_name=event,
             reason_code=reason_code,
             reason=reason,
-            workspace=workspace_path,
-            home_dir=home_path,
-            guard_home=guard_home,
-            recording_only=recording_only_from_acked_snapshot(getattr(daemon_server, "store", None), harness),
         )
-
-    def _validated_fail_safe_hook_paths(
-        self,
-        params: Mapping[str, list[str]],
-        *,
-        hook_deadline: float | None = None,
-    ) -> tuple[Path | None, Path | None]:
-        """Return workspace and home directories that passed hook path validation.
-
-        This answer is built when the runtime has just failed or is overloaded,
-        so both directories are settled in one call against a short deadline:
-        a fail-safe response must not wait on the runtime it is standing in for.
-        """
-
-        deadline = time.monotonic() + _FAIL_SAFE_DIRECTORY_TRUST_SECONDS
-        if hook_deadline is not None:
-            deadline = min(deadline, hook_deadline)
-        if time.monotonic() >= deadline:
-            # A fail-safe answer must not start another RPC after the hook
-            # budget expires; omitting unverified paths remains fail closed.
-            return (None, None)
-        try:
-            directories = self._settled_hook_directories(
-                ("workspace", self._optional_string(params.get("workspace", [None])[-1])),
-                ("home", self._optional_string(params.get("home", [None])[-1])),
-                deadline_monotonic=deadline,
-            )
-        except _HookPathValidationError:
-            return (None, None)
-        return (
-            self._fail_safe_directory(directories, "workspace"),
-            self._fail_safe_directory(directories, "home"),
-        )
-
-    @staticmethod
-    def _fail_safe_directory(directories: _HookDirectories, parameter: str) -> Path | None:
-        try:
-            settled = directories.require(parameter)
-        except _HookPathValidationError:
-            return None
-        return Path(settled) if settled else None
 
     def _execute_runtime_hook(
         self,
@@ -2268,7 +2321,6 @@ class _GuardDaemonHandler(
                     default_harness=default_harness,
                     reason="HOL Guard could not complete the native hook decision safely.",
                     reason_code="native_hook_worker_unavailable",
-                    hook_deadline=deadline,
                 )
             # A review that finished late still finished: the answer carries the
             # same decision the native edge would have sent on time, so send it
@@ -2854,7 +2906,7 @@ class _GuardDaemonHandler(
             load_detail = "Review capacity is available."
         return {
             "ok": True,
-            "receipts": len(store.list_receipts(limit=500)),
+            "receipts": store.count_receipts(),
             "approvals": pending_approvals,
             "pending_approvals": pending_approvals,
             "hook_evidence_writer": evidence_writer_stats,
@@ -3062,6 +3114,59 @@ class _GuardDaemonHandler(
         body = escape_json_for_html(json.dumps(payload).encode("utf-8"))
         self._write_json_bytes(body, status=status, extra_headers=extra_headers)
 
+    def _serve_release_feed_read(self, parsed: ParseResult) -> None:
+        """Serve one published release document through the native projector.
+
+        The dashboard cannot reach the portal itself (`connect-src 'self'`),
+        so this route is its only transport. The server moves bytes: it never
+        reads, filters, or reorders a release.
+        """
+
+        if not release_feed_rollout_enabled():
+            self._write_json({"error": RELEASE_FEED_UNAVAILABLE}, status=503)
+            return
+        if parsed.path == _LOCAL_RELEASES_INDEX:
+            kind, slug = "index", None
+        elif parsed.path == _LOCAL_RELEASES_DETAIL:
+            kind, slug = "detail", None
+        else:
+            self._write_json({"error": "not_found"}, status=404)
+            return
+        params = parse_qs(parsed.query, keep_blank_values=False)
+        if kind == "detail":
+            slugs = params.get("slug", [])
+            if len(slugs) != 1:
+                self._write_json({"error": RELEASE_FEED_REQUEST_INVALID}, status=400)
+                return
+            slug = slugs[0]
+        page = _release_feed_number(params.get("page"), default=1)
+        page_size = _release_feed_number(params.get("pageSize"), default=MAX_RELEASE_FEED_PAGE_SIZE)
+        if page is None or page_size is None:
+            self._write_json({"error": RELEASE_FEED_REQUEST_INVALID}, status=400)
+            return
+        store = self.server.store  # type: ignore[attr-defined]
+        result = release_feed_projection(
+            guard_home=store.guard_home,
+            kind=kind,
+            slug=slug,
+            page=page,
+            page_size=page_size,
+        )
+        if result is None:
+            self._write_json({"error": RELEASE_FEED_UNAVAILABLE}, status=501)
+            return
+        if result.error_code is not None:
+            self._write_json({"error": result.error_code}, status=result.status)
+            return
+        if result.body is None:
+            self._write_json({"error": RELEASE_FEED_UNAVAILABLE}, status=503)
+            return
+        self._write_json_bytes(
+            escape_json_for_html(result.body),
+            status=200,
+            extra_headers={"Cache-Control": "no-store"},
+        )
+
     def _write_discovery_body(self, body: bytes) -> None:
         """Write the native discovery projection verbatim, uncached.
 
@@ -3196,6 +3301,10 @@ class GuardDaemonServer:
             raise RuntimeError("A previous Guard daemon remains quarantined after unconfirmed containment.")
         self._diagnostics = DaemonDiagnostics(store.guard_home)
         flush_pending_phases(self._diagnostics.record_phase)
+        # Catalog preparation and publication run on their own threads and hold
+        # no daemon object. Without this sink a permanent preparation fault
+        # leaves no line in daemon.log while every catalog read answers 503.
+        install_background_sink(self._diagnostics.record_background)
         try:
             with timed_phase("init_provider_registry"):
                 self._isolation_provider_registry = load_managed_provider_registry()
@@ -3836,6 +3945,11 @@ class GuardDaemonServer:
             except Exception:
                 contained = False
         contained = self._join_service_background_threads() and contained
+        extension_control_api = getattr(self._server, "extension_control_api", None)
+        if extension_control_api is not None:
+            # Best effort: process exit releases the leases anyway.
+            with suppress(Exception):
+                _ = extension_control_api.release_prepared_cache_leases()
         with suppress(Exception):
             clear_guard_daemon_state_if_current(
                 self._server.store.guard_home,
@@ -4095,6 +4209,9 @@ class GuardDaemonServer:
                     refreshed_at,
                 )
                 wait_seconds = backoff_seconds
+            # Separate endpoint: refresh it whether or not the supply-chain
+            # bundle synced.
+            sync_network_protection_bundle_best_effort(self._server.store)
             if self._shutdown_started.wait(wait_seconds):
                 return
 
@@ -4109,11 +4226,34 @@ class GuardDaemonServer:
         self._extension_control_refresh_thread.start()
 
     def _refresh_extension_control_loop(self) -> None:
+        next_security_refresh = 0.0
         while not self._shutdown_started.wait(self._extension_control_refresh_interval_seconds):
+            periodic = time.monotonic() >= next_security_refresh
             try:
-                _ = self._server.refresh_extension_control_runtime()
+                with lifecycle.session():
+                    if periodic:
+                        from ..catalog_delivery.active_security import observe
+                        from ..catalog_delivery.discovery import request_refresh
+
+                        next_security_refresh = time.monotonic() + 300.0
+                        # Security observation must not wait for complete discovery
+                        # traversal. The latter has its own bounded background slot.
+                        try:
+                            observe(self._server.store)
+                        finally:
+                            request_refresh(self._server.store.guard_home, store=self._server.store)
+                    _ = self._server.refresh_extension_control_runtime()
             except Exception:
                 _LOGGER.exception("Failed to refresh resident extension-control authority")
+            if periodic:
+                try:
+                    from ..catalog_delivery.cache_io import cleanup
+
+                    with lifecycle.session():
+                        self._server.extension_control_api.expire_prepared_cache_leases()
+                        cleanup(self._server.store)
+                except Exception:
+                    _LOGGER.exception("Failed to clean the command-pack cache")
 
     def _start_aibom_inventory_refresh(self) -> None:
         if self._aibom_refresh_interval_seconds is None or self._aibom_refresh_interval_seconds <= 0:
@@ -4166,6 +4306,19 @@ class GuardDaemonServer:
             try:
                 home_dir, workspace_dir, bound_workspace_id = self._aibom_inventory_context_dirs()
                 if workspace_dir is None:
+                    # Without a workspace the cloud snapshot is left alone; the
+                    # user-wide scan still feeds fleet posture inventory.
+                    # A failed home scan is reported here so the status still
+                    # says no workspace is bound rather than a sync error.
+                    try:
+                        user_inventory = remember_user_inventory_if_due(
+                            self._server.store,
+                            generated_at=refreshed_at,
+                            min_interval_seconds=max(int(interval_seconds), 1),
+                            home_dir=home_dir if home_dir is not None else self._aibom_home_dir,
+                        )
+                    except Exception as error:
+                        user_inventory = {"collected": False, "error": str(error)}
                     self._server.store.set_sync_payload(
                         "aibom_inventory_daemon",
                         {
@@ -4173,6 +4326,7 @@ class GuardDaemonServer:
                             "reason": "missing_workspace_context",
                             "skipped": True,
                             "refreshed_at": refreshed_at,
+                            "user_inventory": user_inventory,
                         },
                         refreshed_at,
                     )

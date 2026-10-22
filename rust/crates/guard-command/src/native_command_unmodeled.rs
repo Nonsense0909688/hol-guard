@@ -10,7 +10,9 @@
 //! less than review.
 //!
 //! Everything that could hide a program or move data keeps the evaluation
-//! failure: wrappers, nested executors, command substitution, redirects other
+//! failure: wrappers, nested executors, command substitution that runs a
+//! program the text does not name or that a contributed extension owns (see
+//! `substitution`), redirects other
 //! than one input heredoc or to a literal path, redirects after a program
 //! that makes links, `PATH` overrides, interpreters and program names built
 //! from expansions or globs, as do signed or managed policy and global
@@ -18,9 +20,11 @@
 //!
 //! An interpreter is unbounded unless it is the whole command and the program
 //! it runs, inline or fed on standard input, was read; it then runs only that
-//! program, as it would run a script file. `xargs` is the exception that
-//! names its program in the text: standard input supplies arguments, not the
-//! program, so `cat list.txt | xargs rm -f` owns what `rm` owns. A literal
+//! program, as it would run a script file. `xargs` and `find -exec` are the
+//! exceptions that name their program in the text: standard input, or find's
+//! own search, supplies arguments and not the program, so
+//! `cat list.txt | xargs rm -f` and `find . -type f -exec basename {} \;` own
+//! what the program they name owns. A literal
 //! input redirect is not read yet, so `xargs rm -f < list.txt` stays an
 //! evaluation failure. An active
 //! extension with trust class `external` that owns a program named in the
@@ -39,6 +43,8 @@ use crate::CanonicalCommandV1;
 
 #[path = "native_command_unmodeled_expansion.rs"]
 mod expansion;
+#[path = "native_command_unmodeled_find_exec.rs"]
+mod find_exec;
 #[path = "native_command_unmodeled_functions.rs"]
 mod functions;
 #[path = "native_command_link_makers.rs"]
@@ -47,12 +53,16 @@ mod link_makers;
 mod redirections;
 #[path = "native_command_unmodeled_shapes.rs"]
 mod shapes;
+#[path = "native_command_unmodeled_substitution.rs"]
+mod substitution;
 #[path = "native_command_unmodeled_xargs.rs"]
 mod xargs;
+use find_exec::{find_exec_programs, EXEC_ACTIONS};
 use link_makers::creates_links;
 use redirections::without_redirections;
 use shapes::{data_heredocs, without_lookups, without_plain_awk};
 pub(crate) use shapes::{python_is_builtin_only, python_stdin};
+use substitution::bounded_substitutions;
 use xargs::{xargs_input_is_named, xargs_names_its_program, xargs_programs};
 
 /// Compatibility owners recognize these programs without a catalog matcher.
@@ -242,10 +252,16 @@ impl CompiledNativeCommandControls {
             && xargs_programs
                 .as_ref()
                 .is_some_and(|programs| !programs.is_empty());
+        let exec_programs = find_exec_programs(shell);
+        // No `-exec` action is `None`, not an empty program set.
+        let exec_names_program = exec_programs
+            .as_ref()
+            .is_some_and(|programs| !programs.is_empty());
         if INTERPRETERS.iter().any(|name| {
             interpreted.contains(*name)
                 && !(sourced_resolved && matches!(*name, "source" | "."))
                 && !(xargs_bounded && *name == "xargs")
+                && !(exec_names_program && EXEC_ACTIONS.contains(name))
         }) {
             // An `xargs` whose operands are not in the text is not bounded by
             // reading a script file. `2>/dev/null xargs gh` still takes its
@@ -269,14 +285,36 @@ impl CompiledNativeCommandControls {
                 None => return None,
             }
         }
-        // Reading the program out of an `xargs` leaves the operands standard
-        // input supplies unread. An active external command source that owns
-        // a program named here, or whose names are unknown, judges arguments
-        // this text does not hold, so the evaluation failure stays. Those
-        // extensions are inactive until enabled. A pipe such as
-        // `cat list.txt | xargs rm -f` keeps the review its built-in owner
-        // gives it. A literal input redirect is not read yet.
-        if xargs_names_program && self.external_source_names_a_program(&named) {
+        // The programs read out of an `xargs` or a `find -exec`. Reading one
+        // leaves the operands standard input, or find's own search, supplies
+        // unread.
+        let delegated: Option<BTreeSet<String>> =
+            (xargs_names_program || exec_names_program).then(|| {
+                xargs_programs
+                    .iter()
+                    .chain(exec_programs.iter())
+                    .flatten()
+                    .cloned()
+                    .collect()
+            });
+        // An active external command source that owns a program named here,
+        // or whose names are unknown, judges arguments this text does not
+        // hold, so the evaluation failure stays. Those extensions are
+        // inactive until enabled. A pipe such as `cat list.txt | xargs rm -f`,
+        // and a `find . -exec rm -f {} \;`, keep the review their built-in
+        // owner gives them. A literal input redirect is not read yet.
+        if delegated.is_some() && self.external_source_names_a_program(&named) {
+            return None;
+        }
+        // A substitution's output becomes arguments of the command around it,
+        // and the extension rules never read the command it runs. A
+        // contributed extension that owns either judges text this one does not
+        // hold, so `gh pr view "$(cat id)"` and `echo $(gh pr list)` keep the
+        // evaluation failure, as `xargs gh` does. A required owner, such as
+        // the one for `git` or `kill`, still supplies its floor below.
+        if bounded_substitutions(text)
+            .is_some_and(|bounded| self.contributed_owner_names_a_program(&bounded.programs))
+        {
             return None;
         }
         let mut floor = "review";
@@ -294,13 +332,14 @@ impl CompiledNativeCommandControls {
                 continue;
             }
             // A contributed extension with a known program list is not read
-            // through when that list includes the program `xargs` names.
-            // `gh` is one, so `xargs gh pr merge` stays an evaluation
-            // failure. An unknown or empty name set is not that list: treating
-            // it as one refused `xargs rm` along with every other unmodeled
-            // command. The required owner of `rm` still reviews it.
-            if xargs_names_program && !extension.required {
-                if let (Some(programs), Some(names)) = (&xargs_programs, &extension_names) {
+            // through when that list includes the program `xargs` or a
+            // `find -exec` names. `gh` is one, so `xargs gh pr merge` stays an
+            // evaluation failure. An unknown or empty name set is not that
+            // list: treating it as one refused `xargs rm` along with every
+            // other unmodeled command. The required owner of `rm` still
+            // reviews it.
+            if !extension.required {
+                if let (Some(programs), Some(names)) = (&delegated, &extension_names) {
                     if !names.is_empty() && !names.is_disjoint(programs) {
                         return None;
                     }
@@ -311,6 +350,31 @@ impl CompiledNativeCommandControls {
             }
         }
         Some(floor)
+    }
+
+    /// An active extension that is not required lists a program in
+    /// `programs`. When some of its rules can match without naming a known
+    /// program, the programs it declares and its other rules name still
+    /// count, so `agi-memory sync $(echo dedupe)` keeps the failure. An
+    /// extension that names none of them is not an owner here.
+    fn contributed_owner_names_a_program(&self, programs: &BTreeSet<String>) -> bool {
+        self.candidate_index
+            .extension_indices()
+            .iter()
+            .any(|&index| {
+                let extension = &self.program.extensions[index];
+                if extension.required || !self.active_extensions.contains(&extension.extension_id) {
+                    return false;
+                }
+                let compatibility = COMPATIBILITY_EXECUTABLES
+                    .iter()
+                    .find(|(id, _)| *id == extension.extension_id)
+                    .map(|(_, executables)| *executables);
+                !self
+                    .program
+                    .extension_known_names(index, compatibility)
+                    .is_disjoint(programs)
+            })
     }
 
     /// An active extension with trust class `external` owns a program the
@@ -374,6 +438,21 @@ fn named_xargs_pipeline(text: &str) -> bool {
     text.contains("xargs")
         && xargs_names_its_program(text)
         && xargs_input_is_named(text)
+        && !text.contains(['<', '>', '`', '$', '\n'])
+        && !moves_data(&literal)
+}
+
+/// A `find` whose every `-exec` names the program it runs. find passes the
+/// paths it found as that program's operands, and those come from the roots
+/// this text already names, so `find src -type f -exec basename {} \;` runs
+/// the `basename` the text shows and owns what `basename` owns. Reading it as
+/// an unbounded nested executor refused it outright, with no approval left to
+/// give it, while `find src -type f -exec cat {} +` was allowed by name.
+/// `find . -exec sh -c ...` runs whatever that reads and names no bounded
+/// program, so it keeps the evaluation failure, as `xargs sh` does.
+fn named_find_exec(text: &str) -> bool {
+    let literal = unquoted_literal(text);
+    find_exec_programs(text).is_some_and(|programs| !programs.is_empty())
         && !text.contains(['<', '>', '`', '$', '\n'])
         && !moves_data(&literal)
 }
@@ -453,26 +532,38 @@ fn reviewable_structure(
     )) {
         return false;
     }
+    // A bounded substitution prints arguments and nothing else, so the shape
+    // around it is read with each one as the word it prints. Anything else
+    // keeps the text as written, where `$(` still reads as moving data.
+    let substituted = bounded_substitutions(&command.normalized_text);
+    let normalized = substituted
+        .as_ref()
+        .map_or(command.normalized_text.as_str(), |bounded| {
+            bounded.text.as_str()
+        });
     match command.uncertainty_reason.as_deref() {
         // Backgrounding runs the same programs the foreground text names, so
         // `npm start &` owns exactly what `npm start` owns. Without this arm a
         // trailing `&` blocked outright while the same command with a redirect
         // reached review, because the redirect reason wins the parser's scan.
         Some("background_job_not_yet_supported") => {
-            let literal = unquoted_literal(&command.normalized_text);
-            !background_pipeline(&command.normalized_text)
-                && (!moves_data(&literal) || literal_redirects_only(&command.normalized_text))
+            let literal = unquoted_literal(normalized);
+            !background_pipeline(normalized)
+                && (!moves_data(&literal) || literal_redirects_only(normalized))
         }
         Some("compound_shell_not_yet_supported") => {
-            let literal = unquoted_literal(&command.normalized_text);
+            let literal = unquoted_literal(normalized);
             !moves_data(&literal)
-                || literal_redirects_only(&command.normalized_text)
-                || named_xargs_pipeline(&command.normalized_text)
+                || literal_redirects_only(normalized)
+                || named_xargs_pipeline(normalized)
         }
         // `cat list.txt | xargs -0 rm -f` is a nested executor because `xargs`
         // is one, and the pipe carries arguments into the program the text
-        // names. `find -exec`, `eval`, and `xargs sh` stay an evaluation
-        // failure: those do not name a bounded program.
+        // names. A `find -exec` names its program the same way, and find's
+        // own search roots are in this text, so `find src -type f -exec
+        // basename {} \;` is read as the `basename` it shows. `eval`,
+        // `xargs sh` and `find -exec sh -c` stay an evaluation failure: those
+        // do not name a bounded program.
         //
         // The shell's `source` builtin is a nested executor too, and the file
         // it reads does name a bounded program set, which the floor below
@@ -481,13 +572,14 @@ fn reviewable_structure(
         // any Python project runs, reached an evaluation failure here and
         // blocked outright, with no approval left to give it.
         Some("nested_command_executor_not_yet_supported") => {
-            let literal = unquoted_literal(&command.normalized_text);
-            named_xargs_pipeline(&command.normalized_text)
-                || ((!moves_data(&literal) || literal_redirects_only(&command.normalized_text))
+            let literal = unquoted_literal(normalized);
+            named_xargs_pipeline(normalized)
+                || named_find_exec(normalized)
+                || ((!moves_data(&literal) || literal_redirects_only(normalized))
                     && sourcing_bounds_its_owners(command, context))
         }
         Some("command_redirect_not_yet_supported") => {
-            let text = without_lookups(&command.normalized_text);
+            let text = without_lookups(normalized);
             // `;2>&1 python3 evil.py` has no segments: the redirect is the
             // uncertainty. Reviewing it would hide the interpreter.
             !glued_redirect_runs_interpreter(&text)
@@ -504,9 +596,9 @@ fn reviewable_structure(
         // interpreter standing behind one, are refused before any floor is
         // read.
         Some("transparent_wrapper_not_yet_supported") => {
-            let literal = unquoted_literal(&command.normalized_text);
+            let literal = unquoted_literal(normalized);
             prefix::launch_only(&literal)
-                && (!moves_data(&literal) || literal_redirects_only(&command.normalized_text))
+                && (!moves_data(&literal) || literal_redirects_only(normalized))
         }
         // An unquoted `${NAME}` expands to a value the shell splits into
         // words. Splitting makes operands, never operators, so the text still
@@ -517,20 +609,26 @@ fn reviewable_structure(
         // before any floor is read, and so is a brace form the shell
         // evaluates rather than substitutes (see `expansion`).
         Some("parameter_expansion_not_yet_supported") => {
-            let literal = unquoted_literal(&command.normalized_text);
-            expansion::expansions_are_inert(&command.normalized_text)
-                && !expansion_builds_a_word(&command.normalized_text)
-                && (!moves_data(&literal) || literal_redirects_only(&command.normalized_text))
+            let literal = unquoted_literal(normalized);
+            expansion::expansions_are_inert(normalized)
+                && !expansion_builds_a_word(normalized)
+                && (!moves_data(&literal) || literal_redirects_only(normalized))
         }
         // A lookup in a substitution is the only one that does not run a
         // program, so a command whose substitutions are all lookups reads
         // like any other compound command.
+        //
+        // Any other substitution is read as the words it prints when every
+        // command it runs is named in its text (see `substitution`).
         Some("command_substitution_not_yet_supported") => {
-            let text = without_lookups(&command.normalized_text);
-            !text.contains("$(")
-                && !text.contains('`')
-                && !text.contains("<<")
-                && plain_after_heredocs(&text)
+            let looked = without_lookups(&command.normalized_text);
+            bounded_substitutions(&looked).is_some_and(|bounded| {
+                let text = bounded.text;
+                !text.contains("$(")
+                    && !text.contains('`')
+                    && !text.contains("<<")
+                    && plain_after_heredocs(&text)
+            })
         }
         _ => false,
     }
@@ -1210,3 +1308,11 @@ mod prefix_tests;
 #[cfg(test)]
 #[path = "native_command_unmodeled_expansion_tests.rs"]
 mod expansion_tests;
+
+#[cfg(test)]
+#[path = "native_command_unmodeled_tree_group_tests.rs"]
+mod tree_group_tests;
+
+#[cfg(test)]
+#[path = "native_command_unmodeled_substitution_tests.rs"]
+mod substitution_tests;

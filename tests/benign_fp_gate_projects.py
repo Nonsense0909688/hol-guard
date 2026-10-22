@@ -11,10 +11,42 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
 from ci.gauntlet.realism_fixtures import activate_script
+
+# A source file the parent repository commits before any worktree exists, so
+# the shapes that read a file's history have history to read. Every other file
+# the fixture commits is a line or two, and `git blame -L1,20` on a four-line
+# file fails for the range rather than for anything Guard decided, which would
+# let a blame case pass while proving nothing.
+COMMITTED_SOURCE = """export type ReportWindow = "24h" | "7d" | "30d";
+
+export interface ReportRequest {
+  window: ReportWindow;
+  workspaceId: string;
+  includeDrafts: boolean;
+}
+
+const WINDOW_HOURS: Record<ReportWindow, number> = {
+  "24h": 24,
+  "7d": 24 * 7,
+  "30d": 24 * 30,
+};
+
+export function windowStart(request: ReportRequest, now: Date): Date {
+  const hours = WINDOW_HOURS[request.window];
+  return new Date(now.getTime() - hours * 60 * 60 * 1000);
+}
+
+export function describe(request: ReportRequest): string {
+  const drafts = request.includeDrafts ? "with drafts" : "without drafts";
+  return `${request.workspaceId}: ${request.window} ${drafts}`;
+}
+"""
 
 
 def _write(path: Path, text: str) -> None:
@@ -51,6 +83,8 @@ def _node_toolchain(workspace: Path, *, tools: bool = False) -> None:
     manifest = {"private": True, "scripts": scripts, "devDependencies": dependencies}
     _write(workspace / "package.json", json.dumps(manifest) + "\n")
     _write(workspace / "package-lock.json", json.dumps({"lockfileVersion": 3, "packages": locked}) + "\n")
+    # Agents reach for `yarn build` in a checkout that carries a yarn lockfile, not only `npm run`.
+    _write(workspace / "yarn.lock", _yarn_lockfile(packages))
     _write(workspace / "tests" / "sample.test.ts", "export const sample = 1;\n")
     for name, version in _NODE_PACKAGES.items():
         _node_package(workspace, name, version)
@@ -61,6 +95,29 @@ def _node_toolchain(workspace: Path, *, tools: bool = False) -> None:
     _write(workspace / "tsconfig.json", json.dumps({"compilerOptions": {"strict": True, "noEmit": True}}) + "\n")
     _write(workspace / "eslint.config.js", "export default [];\n")
     _write(workspace / ".prettierrc", "{}\n")
+
+
+def _sibling_test_runner(repository: Path) -> None:
+    """Jest installed at a checkout's root: its launcher loads the CLI package, as the real one does."""
+    modules = repository / "node_modules"
+    _write(modules / "jest" / "package.json", json.dumps({"name": "jest", "version": "30.0.5"}) + "\n")
+    _write(
+        modules / "jest" / "bin" / "jest.js",
+        "#!/usr/bin/env node\nconst importLocal = require('import-local');\n"
+        "if (!importLocal(__filename)) {\n  require('jest-cli/bin/jest');\n}\n",
+    )
+    _write(modules / "import-local" / "index.js", "module.exports = () => false;\n")
+    _write(modules / "jest-cli" / "bin" / "jest.js", "console.log('jest-cli 30.0.5');\n")
+    _write(repository / "jest.config.js", "module.exports = {};\n")
+
+
+def _yarn_lockfile(packages: dict[str, str]) -> str:
+    """A classic ``yarn.lock``, the file that makes ``yarn build`` the project's spelling."""
+    entries = [
+        f'"{name}@^{version}":\n  version "{version}"\n  resolved "https://registry.yarnpkg.com/{name}"\n'
+        for name, version in packages.items()
+    ]
+    return "# yarn lockfile v1\n\n" + "\n".join(entries)
 
 
 def _node_package(workspace: Path, name: str, version: str, binaries: tuple[str, ...] = ()) -> None:
@@ -88,8 +145,14 @@ def _python_toolchain(workspace: Path) -> None:
     _write(workspace / "src" / "fixture_app" / "__init__.py", "VERSION = '0.1.0'\n")
     _write(workspace / "tests" / "test_fixture_app.py", "def test_version():\n    assert True\n")
     venv = workspace / ".venv"
-    _write(venv / "pyvenv.cfg", "home = /usr/bin\nversion = 3.12.3\ninclude-system-site-packages = false\n")
-    for name in ("pytest", "ruff", "mypy"):
+    base = workspace / ".fixture-python" / "bin" / "python3"
+    base.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(sys.executable, base)
+    base.chmod(0o755)
+    _write(venv / "pyvenv.cfg", f"home = {base.parent}\nversion = 3.12.3\ninclude-system-site-packages = false\n")
+    # `pip` and `pip3` come with the environment itself, so a project reads
+    # its installed packages through them as readily as it runs its tools.
+    for name in ("pytest", "ruff", "mypy", "pip", "pip3"):
         script = venv / "bin" / name
         _write(script, f"#!/bin/sh\nexec echo '{name}'\n")
         script.chmod(0o755)
@@ -105,8 +168,10 @@ def _python_toolchain(workspace: Path) -> None:
     # `unset -f`, an `alias`/`unalias` pair, command substitutions and
     # `hash -r`. A fixture without them proves nothing about a real venv.
     _write(venv / "bin" / "activate", activate_script(venv))
-    # A venv links its interpreter to the base one; the gate never runs it.
-    (venv / "bin" / "python").symlink_to(sys.executable)
+    # Keep the real executable's bytes and the venv's symlink, but place the
+    # base in the fixture's executable roots. The gate never runs Python; a
+    # link to the host's interpreter otherwise measures the runner's layout.
+    (venv / "bin" / "python").symlink_to(base)
     (venv / "bin" / "python3").symlink_to("python")
 
 
@@ -130,8 +195,19 @@ def _build_toolchain(workspace: Path) -> None:
     _write(workspace / "go.mod", "module example.invalid/fixture\n\ngo 1.23\n")
     _write(workspace / "main.go", 'package main\n\nfunc main() {\n\tprintln("fixture")\n}\n')
     _write(workspace / "main_test.go", 'package main\n\nimport "testing"\n\nfunc TestMain(t *testing.T) {}\n')
+    # Agents move entry points into `cmd/` constantly; the move is only a real
+    # shape when the destination directory already exists, because `mv` onto a
+    # missing path renames the file instead of moving it into a directory.
+    _write(workspace / "cmd" / "README.md", "Command entry points.\n")
     _write(workspace / "Cargo.toml", '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2021"\n')
     _write(workspace / "src" / "lib.rs", "pub fn fixture() -> u8 {\n    1\n}\n")
+    # `just` and `pre-commit` are the other two task runners agents drive from a checkout root.
+    _write(workspace / "justfile", "build:\n    npm run build\n\ntest:\n    npm test\n")
+    _write(
+        workspace / ".pre-commit-config.yaml",
+        "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        name: lint\n"
+        "        entry: npm run lint\n        language: system\n",
+    )
 
 
 def _bun_lockfile(project: Path, packages: dict[str, str]) -> None:
@@ -150,16 +226,47 @@ def host_tool_path(home: Path, search_path: str) -> str:
     runners keep Node in a world-writable ``/usr/local/bin``, which the workspace sandbox refuses
     to execute from, so a package script would stay at review for the host instead of running
     contained. Stand-ins in a version-manager directory the sandbox accepts go first, as a
-    developer's own Node does, and the sandbox finds the same file by the same name. The synthetic
-    connector CLIs install into ``~/.local/bin``, which a real login shell has on PATH; it goes first
-    so the fixture CLI, not a host program, is the one a grant was recorded for.
+    developer's own Node does, and the sandbox finds the same file by the same name. Yarn sits beside
+    them because a project that runs ``yarn build`` is as ordinary as one that runs ``npm run build``,
+    and a runner without Yarn would measure a missing binary rather than Guard. SQLite sits there
+    for the same reason from the other direction: every macOS developer has a ``sqlite3``, but where
+    a host keeps it differs, and a hosted runner's copy resolves outside the roots the sandbox
+    executes from, so the gate would be measuring that host's package layout rather than the command
+    a model ran. The synthetic connector CLIs install into ``~/.local/bin``, which a real login
+    shell has on PATH; it goes first so the fixture CLI, not a host program, is the one a grant was
+    recorded for. ``uv`` is there for the same reason as SQLite: a runner installs it wherever its
+    own setup put it, often a directory the sandbox executes nothing from, so a stand-in sits in
+    the Cargo bin directory a developer's own ``uv`` resolves from and the gate measures the
+    command rather than the runner's layout.
     """
     stand_in = "#!/bin/sh\nexit 0\n"
     bun = home / ".bun" / "bin"
     node = home / ".nvm" / "versions" / "node" / "v25.2.1" / "bin"
-    for directory, names in ((bun, ("bun",)), (node, ("node", "npm", "npx"))):
+    sqlite = home / ".asdf" / "installs" / "sqlite" / "3.46.1" / "bin"
+    cargo = home / ".cargo" / "bin"
+    tools = (
+        (bun, ("bun",)),
+        (node, ("node", "npm", "npx", "yarn")),
+        (sqlite, ("sqlite3",)),
+        (cargo, ("uv",)),
+    )
+    for directory, names in tools:
         for name in names:
             _write(directory / name, stand_in)
             (directory / name).chmod(0o755)
     local_bin = home / ".local" / "bin"
-    return os.pathsep.join([str(local_bin), str(node), search_path, str(bun)])
+    return os.pathsep.join(
+        [str(local_bin), str(node), str(sqlite), str(cargo), search_path, str(bun)]
+    )
+
+
+def _application_database(path: Path) -> None:
+    """A real SQLite file, because an agent's `.tables` and `.schema` run against one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL)")
+        connection.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL)")
+        connection.commit()
+    finally:
+        connection.close()

@@ -12,6 +12,7 @@ from ci.gauntlet.catalog import load_catalog
 from ci.gauntlet.clone_fixtures import (
     LONG_LIVED_BRANCH,
     LONG_LIVED_CLONE_CASE,
+    LONG_LIVED_WORKTREE_CASE,
     long_lived_clone_checks,
     long_lived_clone_config,
 )
@@ -36,6 +37,7 @@ from ci.gauntlet.fixtures import (
     gitconfig_variant,
 )
 from ci.gauntlet.host_process import realistic_environment
+from ci.gauntlet.native_tools import native_tools_scope_error
 from ci.gauntlet.parent_fixtures import PARENT_WORKSPACE_CASE
 from ci.gauntlet.realism_fixtures import DASHBOARD, REVIEW_NOTES_MARKER
 from ci.gauntlet.source_output_fixtures import HELPER_MARKER, ROUTE_MARKER, SOURCES, WORKER_MARKER
@@ -275,13 +277,30 @@ def test_long_lived_clone_fixture_signs_by_default_and_tracks_many_branches(tmp_
     assert "retired/" not in _git(other.workspace, other.home, "config", "--list")
 
 
+def test_long_lived_clone_worktree_fixture_adds_both_sibling_worktrees(tmp_path: Path) -> None:
+    scenario = {s.id: s for s in load_catalog()}[LONG_LIVED_WORKTREE_CASE]
+    assert (scenario.expectation, scenario.oracle) == ("allow", "native-tools")
+    fixture = create_fixture(tmp_path / "fx", realistic=True, scenario_id=LONG_LIVED_WORKTREE_CASE)
+    main = fixture.home / "project"
+    assert len(_git(main, fixture.home, "config", "--null", "--list").encode()) > 256 * 1024
+    assert long_lived_clone_checks(fixture.workspace, LONG_LIVED_WORKTREE_CASE) == {"long-lived-worktrees-added": False}
+    for command in scenario.commands:
+        arguments = command.replace("{{home}}", str(fixture.home)).split()
+        assert arguments[:3] == ["git", "-C", str(main)]
+        _git(main, fixture.home, *arguments[3:])
+    assert long_lived_clone_checks(fixture.workspace, LONG_LIVED_WORKTREE_CASE) == {"long-lived-worktrees-added": True}
+
+
 @pytest.mark.parametrize("case", [FAST_FORWARD_CASE, FAST_FORWARD_HOOK_CASE])
 def test_fast_forward_fixture_puts_origin_one_commit_ahead(tmp_path: Path, case: str) -> None:
     scenarios = {s.id: s for s in load_catalog()}
     assert (scenarios[FAST_FORWARD_CASE].expectation, scenarios[FAST_FORWARD_CASE].oracle) == ("allow", "native-tools")
     assert scenarios[FAST_FORWARD_HOOK_CASE].oracle == "blocked-command"
     assert scenarios[FAST_FORWARD_HOOK_CASE].commands == ("git merge --ff-only origin/main",)
-    fixture = create_fixture(tmp_path / "fx", realistic=True, scenario_id=case)
+    # The runner builds the realistic shapes only for the `native-tools` oracle,
+    # so the hook case must get its shape from the plain fixture it really runs in.
+    realistic = scenarios[case].oracle == "native-tools"
+    fixture = create_fixture(tmp_path / "fx", realistic=realistic, scenario_id=case)
     assert _git(fixture.workspace, fixture.home, "remote", "get-url", "origin").strip() == ORIGIN_URL
     assert _git(fixture.workspace, fixture.home, "rev-parse", "origin/main~1").strip() == (
         _git(fixture.workspace, fixture.home, "rev-parse", "HEAD").strip()
@@ -294,6 +313,34 @@ def test_fast_forward_fixture_puts_origin_one_commit_ahead(tmp_path: Path, case:
     after = fast_forward_checks(fixture.workspace, case)
     # The allow case passes once the merge lands; the hook case fails if it ever does.
     assert all(after.values()) if case == FAST_FORWARD_CASE else not any(after.values())
-    other = create_fixture(tmp_path / "other", realistic=True, scenario_id="omp-native-git-compound-reads")
-    assert not _git(other.workspace, other.home, "remote").strip()
-    assert not (other.home / ".config/git/hooks/post-merge").exists()
+    for realism in (True, False):
+        other = create_fixture(
+            tmp_path / f"other-{realism}", realistic=realism, scenario_id="omp-native-git-compound-reads"
+        )
+        assert not _git(other.workspace, other.home, "remote").strip()
+        assert not (other.home / ".config/git/hooks/post-merge").exists()
+
+
+def _bash(command: str, key: str) -> dict[str, object]:
+    return {
+        "id": key,
+        "name": "bash",
+        "args": {"command": command},
+        "result": {"content": [{"type": "text", "text": "{{workspace}}/app-portal/src/report.ts\n"}]},
+        "is_error": False,
+    }
+
+
+def test_the_parent_search_accepts_the_spelling_the_redactor_writes() -> None:
+    """That session's cwd is the parent directory, so evidence spells it `{{workspace}}`."""
+    scenario = next(item for item in load_catalog() if item.id == PARENT_WORKSPACE_CASE)
+    calls = [
+        _bash(command.replace("{{home}}/Code/org", "{{workspace}}"), f"call-{index}")
+        for index, command in enumerate(scenario.commands)
+    ]
+    assert native_tools_scope_error(scenario, calls, {}) is None
+    assert native_tools_scope_error(scenario, calls[:1], {}) == "the model skipped a listed shell command"
+    stray = [*calls, _bash("git -C {{workspace}}/app-portal status", "stray")]
+    assert native_tools_scope_error(scenario, stray, {}) == (
+        "the model ran a shell command the scenario did not list"
+    )

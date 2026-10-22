@@ -225,6 +225,7 @@ fn routed<'a>(
     let mut index = 0;
     let mut saw_change_directory = false;
     let mut saw_git_dir = false;
+    let mut without_repository = false;
     while let Some(argument) = arguments.get(index) {
         if matches!(
             argument.as_str(),
@@ -285,22 +286,40 @@ fn routed<'a>(
         if saw_change_directory && !std::path::Path::new(target).is_absolute() {
             return None;
         }
-        if !crate::pretool::safe_directory_target(target)
-            || !crate::pretool::git_route_within_workspace(target, context)
-        {
+        // A read that discovers no repository below `-C` only prints an
+        // error, so it needs no repository proof. Operations that write still
+        // have to land in a checkout the route proofs admit.
+        if !crate::pretool::safe_directory_target(target) {
             return None;
         }
-        // Like `cd`, an absolute Windows target must be its exact canonical spelling.
+        if !crate::pretool::git_route_within_workspace(target, context) {
+            if !(inspection && crate::pretool::git_route_without_repository(target, context)) {
+                return None;
+            }
+            without_repository = true;
+        }
+        // Like `cd`, an absolute Windows target must be its exact canonical
+        // spelling. A route that only prints `fatal:` is admitted for a
+        // directory that is not there, which has no canonical spelling of its
+        // own, so there the proof holds the deepest name that does exist.
         #[cfg(windows)]
         if std::path::Path::new(target).is_absolute()
-            && !crate::pretool::directory_targets::exact_existing_drive_target(target)
+            && !if without_repository {
+                crate::pretool::directory_targets::exact_drive_target_with_absent_tail(target)
+            } else {
+                crate::pretool::directory_targets::exact_existing_drive_target(target)
+            }
         {
             return None;
         }
         saw_change_directory = true;
         index += 1;
     }
-    arguments.get(index..)
+    let rest = arguments.get(index..)?;
+    if without_repository && crate::pretool::reads_without_repository(rest) {
+        return None;
+    }
+    Some(rest)
 }
 
 #[cfg(test)]

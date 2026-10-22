@@ -19,6 +19,24 @@ mod extract;
 mod omp;
 #[path = "generic_omp_bash_cwd.rs"]
 mod omp_bash_cwd;
+
+/// Resolve the host's tool-level directory for an execution-owner preview.
+/// This is path observation only; the owner must still judge current policy.
+pub fn omp_bash_execution_directory(
+    payload: &serde_json::Value,
+    home_dir: Option<&str>,
+    session: Option<&str>,
+) -> Result<Option<String>, &'static str> {
+    match omp_bash_cwd::resolve(payload, home_dir, session) {
+        omp_bash_cwd::BashCwd::Session => Ok(session.map(str::to_owned)),
+        omp_bash_cwd::BashCwd::Within(path) | omp_bash_cwd::BashCwd::Outside(path) => {
+            Ok(Some(path))
+        }
+        omp_bash_cwd::BashCwd::Missing | omp_bash_cwd::BashCwd::Unresolved => {
+            Err("bash_working_directory_unavailable")
+        }
+    }
+}
 #[cfg(all(test, unix))]
 #[path = "generic_omp_bash_cwd_tests.rs"]
 mod omp_bash_cwd_tests;
@@ -50,6 +68,14 @@ use extract::extract_generic_signals;
 use result::{generic_action, generic_error_result, generic_result};
 use std::time::Instant;
 
+/// The command a virtualenv activation hands its verdict to, or `None` when
+/// the activation is not one the scan can read through. The pre-tool pass
+/// answers for the projected command, so a caller that routes that answer
+/// somewhere which plans the call again has to plan the same text.
+pub fn venv_activation_target(command: &str, context: super::PathContext<'_>) -> Option<String> {
+    venv_activation_projection::project(command, context)
+}
+
 /// Bounded caller-supplied context, never authenticated provider facts.
 pub struct UntrustedCommandContext {
     pub command: Option<String>,
@@ -66,6 +92,31 @@ pub fn extract_untrusted_command_context(
         command: signals.command,
         business_action_present: signals.business_action_present,
     })
+}
+
+/// Destinations a tool call names: URL-valued arguments plus explicit
+/// `http(s)://` URLs in its command text. Empty when the payload cannot be
+/// read; that payload already gets the extraction failure's own decision.
+pub fn network_targets(payload: &Value, limit: usize) -> Vec<String> {
+    let Ok(signals) = extract_generic_signals(payload) else {
+        return Vec::new();
+    };
+    let mut targets = Vec::new();
+    for target in signals.url_values.into_iter().chain(
+        signals
+            .command
+            .as_deref()
+            .map(|command| crate::network_url::urls_in_text(command, limit))
+            .unwrap_or_default(),
+    ) {
+        if targets.len() >= limit {
+            break;
+        }
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    targets
 }
 
 #[path = "agent_metadata.rs"]
@@ -173,11 +224,11 @@ pub fn evaluate_pre_tool_envelope_with_execution_context(
     context: super::PathContext<'_>,
     execution_environment: Option<&guard_contracts::GuardExecutionEnvironmentV1>,
 ) -> PreToolResultV1 {
-    let mut context = context;
-    let projected_payload;
+    let mut context =
+        super::PathContext::for_session(context.home_dir, context.cwd, execution_environment);
+    let (projected_payload, cline_payload);
     let mut payload = payload;
     let within;
-    let cline_payload;
     if harness == "cline" {
         if let Some(view) = cline_view::evaluated_view(payload) {
             cline_payload = view;
@@ -443,7 +494,7 @@ fn evaluate_envelope(
         .command
         .as_deref()
         .filter(|_| !search_scope_proven && !apply_patch_proven)
-        .and_then(|command| venv_activation_projection::project(command, context))
+        .and_then(|command| venv_activation_projection::verdict_target(command, context))
     {
         let projected_payload = payload_with_command(
             payload,
@@ -869,26 +920,25 @@ fn evaluate_envelope(
         )
     });
     // macOS runs every credential-filtering profile. Windows runs the Python
-    // and Node evaluation profiles, the Vite build and the read-only Node
-    // tools (lint, typecheck and format checks) in an AppContainer, for
-    // harnesses whose shell runs a sink command written for it: Claude Code
-    // (Git Bash) and the Pi family (a bash implementation) take the
-    // POSIX-quoted one for all of them, Codex a PowerShell one for the Python
-    // profile only. Only harnesses that rewrite into the contained sink get
-    // the receipt; others would see a bare deny.
-    let windows_contained = match contained_test_reason {
-        Some("native_python_eval_readonly_containment_required") => {
-            matches!(harness, "claude-code" | "codex" | "omp" | "oh-my-pi" | "pi")
-        }
-        Some(
-            "native_node_build_output_containment_required"
-            | "native_node_tool_readonly_containment_required"
-            | "native_node_eval_readonly_containment_required",
-        ) => {
-            matches!(harness, "claude-code" | "omp" | "oh-my-pi" | "pi")
-        }
-        _ => false,
-    };
+    // and Node evaluation profiles, the read-only pytest profile, the Vite
+    // build and the read-only Node tools (lint, typecheck and format checks)
+    // in an AppContainer, for harnesses whose shell runs a sink command
+    // written for it: Claude Code (Git Bash) and the Pi family (a bash
+    // implementation) take the POSIX-quoted one, Codex a PowerShell one. The
+    // sink command names only the profile, so every profile routes the same
+    // way. Only harnesses that rewrite into the contained sink get the
+    // receipt; others would see a bare deny.
+    let windows_contained =
+        matches!(
+            contained_test_reason,
+            Some(
+                "native_python_eval_readonly_containment_required"
+                    | "native_node_build_output_containment_required"
+                    | "native_node_tool_readonly_containment_required"
+                    | "native_node_eval_readonly_containment_required"
+                    | "native_pytest_readonly_containment_required"
+            )
+        ) && matches!(harness, "claude-code" | "codex" | "omp" | "oh-my-pi" | "pi");
     if (cfg!(target_os = "macos") || (cfg!(windows) && windows_contained))
         && event == "PreToolUse"
         && matches!(
