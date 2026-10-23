@@ -1389,6 +1389,7 @@
           "command.kintsua",
           "command.kranz",
           "command.librarybridge",
+          "command.llmrig",
           "command.macscope",
           "command.master-of",
           "command.mcp-agent-wire",
