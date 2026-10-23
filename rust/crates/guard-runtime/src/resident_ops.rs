@@ -381,6 +381,9 @@ pub(crate) fn evaluate_resident_bytes_with_cancellation(
             ResidentOperationV1::PackageIntentParse(request) => {
                 crate::package_authority_op::evaluate_package_intent_parse(&request)
             }
+            ResidentOperationV1::PackageIntentExtract(request) => {
+                crate::package_intent_extract_op::evaluate_package_intent_extract(&request)
+            }
             ResidentOperationV1::PackageRequestArtifact(request) => {
                 crate::package_authority_op::evaluate_package_request_artifact_request(&request)
             }
@@ -507,10 +510,31 @@ pub(crate) fn evaluate_resident_bytes_with_cancellation(
             ResidentOperationV1::HookArtifactFacts(request) => {
                 crate::hook_artifact_facts_op::evaluate_hook_artifact_facts_request(&request)
             }
+            ResidentOperationV1::InventoryItemClassification(request) => {
+                crate::inventory_item_classification_op::evaluate_inventory_item_classification_request(
+                    &request,
+                )
+            }
+            ResidentOperationV1::InventorySnapshotDigest(request) => {
+                crate::inventory_snapshot_digest_op::evaluate_inventory_snapshot_digest_request(
+                    &request,
+                )
+            }
             ResidentOperationV1::InventorySourceEvidence(request) => {
                 crate::inventory_source_evidence_op::evaluate_inventory_source_evidence_request(
                     &request,
                 )
+            }
+            ResidentOperationV1::InventoryScanFindings(request) => {
+                crate::inventory_scan_findings_op::evaluate_inventory_scan_findings_request(
+                    &request,
+                )
+            }
+            ResidentOperationV1::CodexHookIdentity(request) => {
+                crate::codex_hook_identity_op::evaluate_codex_hook_identity_request(&request)
+            }
+            ResidentOperationV1::InventoryScanTargets(request) => {
+                crate::inventory_scan_targets_op::evaluate_inventory_scan_targets_request(&request)
             }
             ResidentOperationV1::ArtifactContentHash(request) => {
                 crate::artifact_content_hash_op::evaluate_artifact_content_hash_request(&request)
@@ -569,6 +593,9 @@ pub(crate) fn evaluate_resident_bytes_with_cancellation(
             }
             ResidentOperationV1::PackageProtectFinalize(request) => {
                 crate::package_protect_finalize_op::evaluate_package_protect_finalize(&request)
+            }
+            ResidentOperationV1::PackageEvaluationView(request) => {
+                crate::package_evaluation_view_op::evaluate_package_evaluation_view(&request)
             }
             ResidentOperationV1::PackagePosture(request) => {
                 crate::package_posture_op::evaluate_package_posture(&request)
@@ -681,6 +708,19 @@ pub(crate) fn evaluate_resident_bytes_with_cancellation(
             ResidentOperationV1::VerifiedReadDecision(request) => {
                 crate::verified_read_decision_op::evaluate_verified_read_decision(&request)
             }
+            ResidentOperationV1::InventoryUrlRedaction(request) => {
+                crate::inventory_url_redaction_op::evaluate_inventory_url_redaction(&request)
+            }
+            ResidentOperationV1::VerifiedReadPlan(request) => {
+                crate::verified_read_plan_op::evaluate_verified_read_plan(&request)
+            }
+            ResidentOperationV1::AibomReportSummaries(request) => {
+                crate::aibom_report_summaries_op::evaluate_aibom_report_summaries(&request)
+            }
+            // Diagnostic correlation only: the lineage never authorizes an action.
+            ResidentOperationV1::RetryLineageCapture(request) => {
+                crate::retry_lineage_capture_op::evaluate_retry_lineage_capture(&request)
+            }
             #[cfg(not(unix))]
             ResidentOperationV1::ContainedNodeExecute(_)
             | ResidentOperationV1::ContainedTypescriptExecute(_)
@@ -716,7 +756,7 @@ pub(crate) fn evaluate_resident_bytes_with_cancellation(
 fn operation_guard_home(operation: &ResidentOperationV1) -> Option<&str> {
     match operation {
         ResidentOperationV1::CloudCatalog(request) => {
-            if request["action"] == "begin" {
+            if request["action"] == "begin" || request["action"] == "reuse" {
                 request["observation"]["guard_home"].as_str()
             } else {
                 request["guard_home"].as_str()

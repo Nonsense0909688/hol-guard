@@ -52,6 +52,7 @@ mod codex_output_inspection;
 mod codex_output_inspection_flow;
 mod codex_output_pathspecs;
 mod codex_output_post_tool;
+mod codex_output_post_tool_commands;
 mod codex_output_post_tool_copy;
 mod codex_output_post_tool_skips;
 mod codex_output_post_tool_sources;
@@ -105,10 +106,14 @@ mod embedded_script_evidence;
 #[cfg(test)]
 mod embedded_script_evidence_tests;
 mod env_wrapper;
+pub mod evidence_hash;
+#[cfg(test)]
+mod evidence_hash_tests;
 mod executable_flag_contract;
 pub mod extension_control;
 pub mod extension_evidence;
 pub mod extension_trust;
+mod github_additional_commands;
 pub mod github_capability_contract;
 #[cfg(test)]
 mod github_capability_contract_tests;
@@ -528,3 +533,6 @@ pub mod verified_npm;
 pub mod verified_read_decision;
 #[cfg(test)]
 mod verified_read_decision_tests;
+pub mod verified_read_plan;
+#[cfg(test)]
+mod verified_read_plan_tests;
