@@ -51,7 +51,7 @@
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven write request",
-              "permission_id": "command.heaven.permission.write-request",
+              "permission_id": "command.heavens.permission.write-request",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
@@ -78,7 +78,7 @@
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven flow run",
-              "permission_id": "command.heaven.permission.flow-run",
+              "permission_id": "command.heavens.permission.flow-run",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
@@ -105,7 +105,7 @@
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven bench load test",
-              "permission_id": "command.heaven.permission.bench",
+              "permission_id": "command.heavens.permission.bench",
               "replacement_permission_id": null,
               "risk_tier": "medium",
               "safer_guidance": [
@@ -132,7 +132,7 @@
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven request with TLS verification disabled",
-              "permission_id": "command.heaven.permission.insecure-tls",
+              "permission_id": "command.heavens.permission.insecure-tls",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
@@ -237,11 +237,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.write-request",
+              "permission_id": "command.heavens.permission.write-request",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.write-request",
+              "rule_id": "command.heavens.write-request",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -469,11 +469,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.flow-run",
+              "permission_id": "command.heavens.permission.flow-run",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.flow-run",
+              "rule_id": "command.heavens.flow-run",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -695,11 +695,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.bench",
+              "permission_id": "command.heavens.permission.bench",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.bench",
+              "rule_id": "command.heavens.bench",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -1008,11 +1008,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.insecure-tls",
+              "permission_id": "command.heavens.permission.insecure-tls",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.insecure-tls",
+              "rule_id": "command.heavens.insecure-tls",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
