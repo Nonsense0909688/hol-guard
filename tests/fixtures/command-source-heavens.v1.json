@@ -17,10 +17,10 @@
           "dependencies": [],
           "description": "Reviews Heaven CLI commands that send write requests, run request workflows, generate load, or disable TLS verification.",
           "ecosystem_ids": [
-            "heaven"
+            "heavens"
           ],
           "executables": [
-            "heaven",
+            "heavens",
             "hv"
           ],
           "extension_id": "command.heavens",
@@ -43,20 +43,20 @@
               "default_enabled": true,
               "dependencies": [],
               "deprecated": false,
-              "description": "Identifies `heaven post|put|patch|delete`, which sends a state-changing HTTP request to the active or specified environment. Protected environments prompt a human, but non-interactive agent sessions bypass that review path. exec and xargs launches are blocked by Guard's wrapper floor.",
-              "example_command": "heaven delete /users/42 --env prod",
+              "description": "Identifies `heavens post|put|patch|delete`, which sends a state-changing HTTP request to the active or specified environment. Protected environments prompt a human, but non-interactive agent sessions bypass that review path. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "example_command": "heavens delete /users/42 --env prod",
               "family": null,
               "fixed_reason": null,
               "implementation_version": "1.0.0",
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven write request",
-              "permission_id": "command.heaven.permission.write-request",
+              "permission_id": "command.heavens.permission.write-request",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
                 "Send the equivalent GET request first to confirm the target resource and environment.",
-                "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
+                "Run against a dev or staging environment, or mark the target environment with `heavens env set NAME --protected`."
               ],
               "typed_capabilities": []
             },
@@ -70,15 +70,15 @@
               "default_enabled": true,
               "dependencies": [],
               "deprecated": false,
-              "description": "Identifies `heaven flow FILE.json`, which executes a chain of requests defined in a file, including write methods, with values extracted between steps. exec and xargs launches are blocked by Guard's wrapper floor.",
-              "example_command": "heaven flow checkout.json --env staging",
+              "description": "Identifies `heavens flow FILE.json`, which executes a chain of requests defined in a file, including write methods, with values extracted between steps. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "example_command": "heavens flow checkout.json --env staging",
               "family": null,
               "fixed_reason": null,
               "implementation_version": "1.0.0",
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven flow run",
-              "permission_id": "command.heaven.permission.flow-run",
+              "permission_id": "command.heavens.permission.flow-run",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
@@ -97,15 +97,15 @@
               "default_enabled": true,
               "dependencies": [],
               "deprecated": false,
-              "description": "Identifies `heaven bench`, which sends many concurrent requests to a target and can overload a service or trigger rate limits. exec and xargs launches are blocked by Guard's wrapper floor.",
-              "example_command": "heaven bench get /health -n 500 -c 25",
+              "description": "Identifies `heavens bench`, which sends many concurrent requests to a target and can overload a service or trigger rate limits. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "example_command": "heavens bench get /health -n 500 -c 25",
               "family": null,
               "fixed_reason": null,
               "implementation_version": "1.0.0",
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven bench load test",
-              "permission_id": "command.heaven.permission.bench",
+              "permission_id": "command.heavens.permission.bench",
               "replacement_permission_id": null,
               "risk_tier": "medium",
               "safer_guidance": [
@@ -125,14 +125,14 @@
               "dependencies": [],
               "deprecated": false,
               "description": "Identifies Heaven commands run with `--insecure` or `-k`, which skips TLS certificate verification and exposes the request and any credentials to interception. exec and xargs launches are blocked by Guard's wrapper floor.",
-              "example_command": "heaven get https://staging.example.com/users --insecure",
+              "example_command": "heavens get https://staging.example.com/users --insecure",
               "family": null,
               "fixed_reason": null,
               "implementation_version": "1.0.0",
               "implied_permissions": [],
               "introduced_version": "1.0.0",
               "label": "Heaven request with TLS verification disabled",
-              "permission_id": "command.heaven.permission.insecure-tls",
+              "permission_id": "command.heavens.permission.insecure-tls",
               "replacement_permission_id": null,
               "risk_tier": "high",
               "safer_guidance": [
@@ -143,11 +143,11 @@
             }
           ],
           "project_markers": [
-            ".heaven"
+            ".heavens"
           ],
           "publisher": {
             "display_name": "Community",
-            "id": "community.heaven",
+            "id": "community.heavens",
             "url": "https://github.com/Nonsense0909688/Heavens"
           },
           "reference_urls": [
@@ -164,7 +164,7 @@
                 "Heaven write request"
               ],
               "default_mode": "review",
-              "description": "Identifies `heaven post|put|patch|delete`, which sends a state-changing HTTP request to the active or specified environment. Protected environments prompt a human, but non-interactive agent sessions bypass that review path. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "description": "Identifies `heavens post|put|patch|delete`, which sends a state-changing HTTP request to the active or specified environment. Protected environments prompt a human, but non-interactive agent sessions bypass that review path. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
                 "config": {},
@@ -173,9 +173,9 @@
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
-                        "heaven",
-                        "heaven.cmd",
-                        "heaven.exe",
+                        "heavens",
+                        "heavens.cmd",
+                        "heavens.exe",
                         "hv",
                         "hv.cmd",
                         "hv.exe"
@@ -237,11 +237,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.write-request",
+              "permission_id": "command.heavens.permission.write-request",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.write-request",
+              "rule_id": "command.heavens.write-request",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -252,9 +252,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -318,9 +318,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -389,7 +389,7 @@
               ],
               "safer_alternatives": [
                 "Send the equivalent GET request first to confirm the target resource and environment.",
-                "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
+                "Run against a dev or staging environment, or mark the target environment with `heavens env set NAME --protected`."
               ],
               "severity": "high",
               "title": "Heaven write request (POST/PUT/PATCH/DELETE)"
@@ -399,7 +399,7 @@
                 "Heaven flow run"
               ],
               "default_mode": "review",
-              "description": "Identifies `heaven flow FILE.json`, which executes a chain of requests defined in a file, including write methods, with values extracted between steps. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "description": "Identifies `heavens flow FILE.json`, which executes a chain of requests defined in a file, including write methods, with values extracted between steps. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
                 "config": {},
@@ -408,9 +408,9 @@
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
-                        "heaven",
-                        "heaven.cmd",
-                        "heaven.exe",
+                        "heavens",
+                        "heavens.cmd",
+                        "heavens.exe",
                         "hv",
                         "hv.cmd",
                         "hv.exe"
@@ -469,11 +469,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.flow-run",
+              "permission_id": "command.heavens.permission.flow-run",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.flow-run",
+              "rule_id": "command.heavens.flow-run",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -484,9 +484,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -547,9 +547,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -625,7 +625,7 @@
                 "Heaven bench load test"
               ],
               "default_mode": "review",
-              "description": "Identifies `heaven bench`, which sends many concurrent requests to a target and can overload a service or trigger rate limits. exec and xargs launches are blocked by Guard's wrapper floor.",
+              "description": "Identifies `heavens bench`, which sends many concurrent requests to a target and can overload a service or trigger rate limits. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
                 "config": {},
@@ -634,9 +634,9 @@
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
-                        "heaven",
-                        "heaven.cmd",
-                        "heaven.exe",
+                        "heavens",
+                        "heavens.cmd",
+                        "heavens.exe",
                         "hv",
                         "hv.cmd",
                         "hv.exe"
@@ -695,11 +695,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.bench",
+              "permission_id": "command.heavens.permission.bench",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.bench",
+              "rule_id": "command.heavens.bench",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -710,9 +710,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -773,9 +773,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -860,9 +860,9 @@
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
-                        "heaven",
-                        "heaven.cmd",
-                        "heaven.exe",
+                        "heavens",
+                        "heavens.cmd",
+                        "heavens.exe",
                         "hv",
                         "hv.cmd",
                         "hv.exe"
@@ -934,9 +934,9 @@
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
-                        "heaven",
-                        "heaven.cmd",
-                        "heaven.exe",
+                        "heavens",
+                        "heavens.cmd",
+                        "heavens.exe",
                         "hv",
                         "hv.cmd",
                         "hv.exe"
@@ -1008,11 +1008,11 @@
                 "op": "any.v1"
               },
               "native_capability": null,
-              "permission_id": "command.heaven.permission.insecure-tls",
+              "permission_id": "command.heavens.permission.insecure-tls",
               "risk_classes": [
                 "execution"
               ],
-              "rule_id": "command.heaven.insecure-tls",
+              "rule_id": "command.heavens.insecure-tls",
               "rule_version": "1.0.0",
               "safe_variants": [
                 {
@@ -1023,9 +1023,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -1098,9 +1098,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -1173,9 +1173,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -1248,9 +1248,9 @@
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
-                            "heaven",
-                            "heaven.cmd",
-                            "heaven.exe",
+                            "heavens",
+                            "heavens.cmd",
+                            "heavens.exe",
                             "hv",
                             "hv.cmd",
                             "hv.exe"
@@ -1335,7 +1335,7 @@
             }
           ],
           "safer_alternatives": [
-            "Use GET requests and `heaven compare` to inspect state before any write.",
+            "Use GET requests and `heavens compare` to inspect state before any write.",
             "Target dev or staging, and mark sensitive environments with --protected."
           ],
           "source": "built-in",
@@ -1378,7 +1378,7 @@
           "command.google-workspace.gog",
           "command.google-workspace.gws",
           "command.hashdup",
-          "command.heavens",
+          "command.heavenss",
           "command.keibidrop",
           "command.kelados",
           "command.kim",
@@ -1566,56 +1566,56 @@
   },
   "cases": [
     {
-      "command": "heaven delete /users/42 --env prod",
+      "command": "heavens delete /users/42 --env prod",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavens"
+        "command.heavenss"
       ],
       "expected_action": "review",
       "expected_effective_segments": [
         0
       ],
       "id": "case-1",
-      "rule_id": "command.heaven.write-request"
+      "rule_id": "command.heavens.write-request"
     },
     {
-      "command": "heaven flow checkout.json --env staging",
+      "command": "heavens flow checkout.json --env staging",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavens"
+        "command.heavenss"
       ],
       "expected_action": "review",
       "expected_effective_segments": [
         0
       ],
       "id": "case-2",
-      "rule_id": "command.heaven.flow-run"
+      "rule_id": "command.heavens.flow-run"
     },
     {
-      "command": "heaven bench get /health -n 500 -c 25",
+      "command": "heavens bench get /health -n 500 -c 25",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavens"
+        "command.heavenss"
       ],
       "expected_action": "review",
       "expected_effective_segments": [
         0
       ],
       "id": "case-3",
-      "rule_id": "command.heaven.bench"
+      "rule_id": "command.heavens.bench"
     },
     {
-      "command": "heaven get https://staging.example.com/users --insecure",
+      "command": "heavens get https://staging.example.com/users --insecure",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavens"
+        "command.heavenss"
       ],
       "expected_action": "review",
       "expected_effective_segments": [
         0
       ],
       "id": "case-4",
-      "rule_id": "command.heaven.insecure-tls"
+      "rule_id": "command.heavens.insecure-tls"
     }
   ],
   "schema": "guard.command-extension-fixtures.v1"
