@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy as copy
 import hashlib as hashlib
 import importlib as importlib
 import ipaddress as ipaddress
@@ -12,6 +13,9 @@ from collections.abc import Sequence as Sequence
 from dataclasses import asdict as asdict
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
+from dataclasses import fields as fields
+from dataclasses import is_dataclass as is_dataclass
+from dataclasses import replace as replace
 from datetime import datetime as datetime
 from datetime import timezone as timezone
 from pathlib import Path as Path
@@ -265,6 +269,73 @@ def _scan_records(
         raise InventoryScanFindingsUnavailableError from None
 
 
+_ITEM_ID_MAX_LENGTH = 160
+
+
+def _artifact_with(artifact: object, **changes: str) -> object | None:
+    """Copy ``artifact`` with ``changes`` applied, or return None if it cannot take them."""
+    if is_dataclass(artifact) and not isinstance(artifact, type):
+        if not changes.keys() <= {item.name for item in fields(artifact)}:
+            return None
+        return replace(artifact, **changes)
+    try:
+        updated = copy.copy(artifact)
+        for name, value in changes.items():
+            setattr(updated, name, value)
+    except (AttributeError, TypeError):
+        return None
+    return updated
+
+
+def _artifact_without_config_path(artifact: object) -> object:
+    if not hasattr(artifact, "config_path"):
+        return artifact
+    stripped = _artifact_with(artifact, config_path="")
+    return artifact if stripped is None else stripped
+
+
+def _artifacts_with_unique_ids(artifacts: tuple[object, ...], *, home_dir: Path) -> tuple[object, ...]:
+    """Give every artifact its own ID before items are built from them.
+
+    A harness can read the same entry from more than one config file (Z Code's
+    ``config.json`` and ``setting.json``), which yields two artifacts with one
+    ID. Guard Cloud rejects a snapshot whose item IDs repeat, so the whole
+    harness would otherwise fail to sync. A copy that differs only in its
+    config path is the same entry and is dropped. A different entry that happens
+    to share the ID (two hooks at the same index in different files) is kept
+    under an ID suffixed with its config path's fingerprint. Every original ID
+    is reserved first, so a generated ID never takes one a later artifact owns.
+    """
+    kept: list[object] = []
+    entries_by_id: dict[str, list[object]] = {}
+    used_ids = {str(getattr(artifact, "artifact_id", "")) for artifact in artifacts}
+    for artifact in artifacts:
+        artifact_id = str(getattr(artifact, "artifact_id", ""))
+        entry = _artifact_without_config_path(artifact)
+        entries = entries_by_id.setdefault(artifact_id, [])
+        if not entries:
+            entries.append(entry)
+            kept.append(artifact)
+            continue
+        if entry in entries:
+            continue
+        entries.append(entry)
+        config_path = str(getattr(artifact, "config_path", ""))
+        suffix = fingerprint_text(redact_local_path(config_path, home_dir=home_dir))[:8]
+        candidate = f"{artifact_id[: _ITEM_ID_MAX_LENGTH - len(suffix) - 1]}#{suffix}"
+        counter = 2
+        while candidate in used_ids:
+            tail = f"{suffix}-{counter}"
+            candidate = f"{artifact_id[: _ITEM_ID_MAX_LENGTH - len(tail) - 1]}#{tail}"
+            counter += 1
+        renamed = _artifact_with(artifact, artifact_id=candidate)
+        if renamed is None:
+            continue
+        used_ids.add(candidate)
+        kept.append(renamed)
+    return tuple(kept)
+
+
 @_native_url.redaction_pass()
 def inventory_snapshot_from_detection(
     detection: object,
@@ -290,6 +361,7 @@ def inventory_snapshot_from_detection(
             workspace_dir=workspace_dir,
         )
     )
+    artifact_tuple = _artifacts_with_unique_ids(artifact_tuple, home_dir=home_dir)
     _prefetch_export_redactions(artifact_tuple, cisco_runs, home_dir=home_dir, workspace_dir=workspace_dir)
     source_evidence = native_inventory_source_evidence(
         [

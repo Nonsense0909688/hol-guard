@@ -33,11 +33,58 @@ from .store_local_cli_rows import (
     local_cli_rules_exist,
 )
 from .store_local_cli_schema import ensure_local_cli_schema
-from .store_mcp_catalog import load_mcp_catalogs, review_catalog_changes, write_mcp_catalog
+from .store_mcp_catalog import load_mcp_catalogs
 from .store_mcp_provider_catalog import load_provider_catalog_summaries
 
 if TYPE_CHECKING:
     from .store import GuardStore
+
+
+def _catalog_args(
+    cli_id: str,
+    commands: Sequence[LocalCliCommand],
+    *,
+    mcp_catalog: McpCatalogResult | None,
+    identity_hash: str | None,
+    seen_at: str | None,
+    expected_catalog_revision: int | None,
+) -> dict[str, object]:
+    """The wire shape both catalog writes share."""
+    return {
+        "cli_id": cli_id,
+        "commands": [
+            {
+                "command_id": command.command_id,
+                "name": command.name,
+                "usage": command.usage,
+                "description": command.description,
+                "parent_id": command.parent_id,
+            }
+            for command in commands
+        ],
+        "identity_hash": identity_hash,
+        "seen_at": seen_at,
+        "expected_catalog_revision": expected_catalog_revision,
+        "mcp_catalog": None if mcp_catalog is None else _catalog_payload(mcp_catalog),
+    }
+
+
+def _catalog_payload(catalog: McpCatalogResult) -> dict[str, object]:
+    return {
+        "tools": list(catalog.tools),
+        "complete": catalog.complete,
+        "reason": catalog.reason,
+        "pages": catalog.pages,
+        "protocol_version": catalog.protocol_version,
+        "server_info": catalog.server_info,
+        "capabilities": catalog.capabilities,
+        "cache_ttl_ms": catalog.cache_ttl_ms,
+        "cache_scope": catalog.cache_scope,
+        "cache_received_at": catalog.cache_received_at,
+        "skills": list(catalog.skills),
+        "skills_complete": catalog.skills_complete,
+        "skills_reason": catalog.skills_reason,
+    }
 
 
 class StoreLocalCliMixin:
@@ -274,60 +321,17 @@ class StoreLocalCliMixin:
         seen_at: str | None = None,
         expected_catalog_revision: int | None = None,
     ) -> None:
-        if not is_local_cli_id(cli_id):
-            raise ValueError("invalid local CLI id")
-        with self._connect() as connection:
-            ensure_local_cli_schema(connection)
-            connection.commit()
-            connection.execute("begin immediate")
-            review_ids = (
-                write_mcp_catalog(
-                    connection,
-                    cli_id,
-                    identity_hash=identity_hash,
-                    catalog=mcp_catalog,
-                    seen_at=seen_at,
-                    expected_revision=expected_catalog_revision,
-                )
-                if mcp_catalog is not None
-                else set()
-            )
-            _ = connection.execute("delete from local_cli_command where cli_id = ?", (cli_id,))
-            for index, command in enumerate(commands):
-                if not is_local_cli_command_id(command.command_id):
-                    raise ValueError("invalid local CLI command id")
-                _ = connection.execute(
-                    """
-                    insert into local_cli_command (
-                        cli_id, command_id, name, usage, description, parent_id, sort_index
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        cli_id,
-                        command.command_id,
-                        command.name[:120],
-                        command.usage[:160],
-                        command.description[:240],
-                        command.parent_id,
-                        index,
-                    ),
-                )
-            known = {command.command_id for command in commands}
-            review_catalog_changes(connection, cli_id, review_ids, known, seen_at)
-            existing = connection.execute(
-                "select command_id, state from local_cli_command_grant where cli_id = ?",
-                (cli_id,),
-            ).fetchall()
-            for row in existing:
-                command_id, state = _row_values(row, 2)
-                command_id = str(command_id)
-                if mcp_catalog is not None and state in {"block", "review"}:
-                    continue
-                if command_id not in known:
-                    _ = connection.execute(
-                        "delete from local_cli_command_grant where cli_id = ? and command_id = ?",
-                        (cli_id, command_id),
-                    )
+        _ = self._native_store_call(
+            "replace_local_cli_commands",
+            _catalog_args(
+                cli_id,
+                commands,
+                mcp_catalog=mcp_catalog,
+                identity_hash=identity_hash,
+                seen_at=seen_at,
+                expected_catalog_revision=expected_catalog_revision,
+            ),
+        )
 
     def merge_local_cli_commands(
         self,
@@ -341,53 +345,23 @@ class StoreLocalCliMixin:
         expected_catalog_revision: int | None = None,
     ) -> None:
         """Append observed tools atomically without deleting existing choices."""
-        if not is_local_cli_id(cli_id) or limit < 1:
-            raise ValueError("invalid local CLI catalog")
-        with self._connect() as connection:
-            ensure_local_cli_schema(connection)
-            connection.commit()
-            connection.execute("begin immediate")
-            review_ids = (
-                write_mcp_catalog(
-                    connection,
-                    cli_id,
-                    identity_hash=identity_hash,
-                    catalog=mcp_catalog,
-                    seen_at=seen_at,
-                    expected_revision=expected_catalog_revision,
-                )
-                if mcp_catalog is not None
-                else set()
-            )
-            rows = connection.execute(
-                "select command_id from local_cli_command where cli_id = ?",
-                (cli_id,),
-            ).fetchall()
-            known = {str(row[0]) for row in rows}
-            if any(not is_local_cli_command_id(command.command_id) for command in commands):
-                raise ValueError("invalid local CLI command id")
-            incoming = {command.command_id for command in commands}
-            if len(known | incoming) > limit:
-                raise LocalCliCatalogLimitError("local_cli_catalog_limit")
-            for command in commands:
-                if command.command_id in known:
-                    continue
-                connection.execute(
-                    """insert into local_cli_command
-                    (cli_id, command_id, name, usage, description, parent_id, sort_index)
-                    values (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        cli_id,
-                        command.command_id,
-                        command.name[:120],
-                        command.usage[:160],
-                        command.description[:240],
-                        command.parent_id,
-                        len(known),
-                    ),
-                )
-                known.add(command.command_id)
-            review_catalog_changes(connection, cli_id, review_ids, known, seen_at)
+        args = _catalog_args(
+            cli_id,
+            commands,
+            mcp_catalog=mcp_catalog,
+            identity_hash=identity_hash,
+            seen_at=seen_at,
+            expected_catalog_revision=expected_catalog_revision,
+        )
+        args["limit"] = limit
+        try:
+            _ = self._native_store_call("merge_local_cli_commands", args)
+        except ValueError as error:
+            # The runtime reports the bound as the same message the Python
+            # owner raised; callers select on the type, not the text.
+            if str(error) == "local_cli_catalog_limit":
+                raise LocalCliCatalogLimitError("local_cli_catalog_limit") from error
+            raise
 
     def upsert_local_cli_command_states(
         self,

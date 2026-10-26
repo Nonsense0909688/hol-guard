@@ -25,8 +25,7 @@ mod settles;
 pub use catalog::compatibility_rule_ids;
 pub(crate) use domains::docker_segment_settles_uncertainty;
 pub(crate) use environment::{
-    code_or_redirect_environment_name, credential_routing_environment_name, inert_environment_name,
-    plain_printed_name,
+    code_or_redirect_environment_name, credential_routing_environment_name, plain_printed_name,
 };
 pub(crate) use git::{
     repository_routes_verified as git_repository_routes_verified,
@@ -60,6 +59,13 @@ pub(crate) fn git_inspection_arguments<'a>(
 /// `origin` followed by quiet/prune flags and simple named refs.
 pub(crate) fn git_fetch_origin_shaped(arguments: &[String]) -> bool {
     git::fetch_origin_shaped(arguments)
+}
+
+/// A refresh whose operands the proof can follow, reported as whether it
+/// reaches every configured remote. `None` is a refresh the proof cannot
+/// follow at all.
+pub(crate) fn git_fetch_every_remote(arguments: &[String]) -> Option<bool> {
+    git::fetch_reach(arguments)
 }
 
 /// The arguments after leading `-C` routes that stay within the workspace,

@@ -23,6 +23,7 @@ fn context() -> crate::pretool::PathContext<'static> {
         shell_home_matches: false,
         ripgrep_config_absent: false,
         psql_environment: Default::default(),
+        creates_nothing: false,
     }
 }
 
@@ -179,6 +180,7 @@ fn file_writes_never_follow_an_existing_symlink() {
         shell_home_matches: false,
         ripgrep_config_absent: false,
         psql_environment: Default::default(),
+        creates_nothing: false,
     };
     for command in [
         "echo hi > link/hosts".to_owned(),
@@ -379,5 +381,36 @@ fn array_and_json_encoded_command_copies_project_consistently() {
             "{payload}"
         );
         assert_eq!(result.minimum_action, "allow", "{payload}");
+    }
+}
+
+#[test]
+fn a_redirect_inside_shell_control_flow_keeps_the_allow_the_flat_list_earns() {
+    for (construct, flat) in [
+        (
+            "if command -v rg >/dev/null; then echo yes; fi",
+            "command -v rg >/dev/null; echo yes",
+        ),
+        (
+            "if true; then echo yes; fi >/dev/null",
+            "true; echo yes >/dev/null",
+        ),
+        (
+            "for name in a b; do echo \"$name\" >/dev/null; done",
+            "echo a >/dev/null; echo b >/dev/null",
+        ),
+    ] {
+        assert_eq!(evaluate(flat).minimum_action, "allow", "{flat}");
+        assert_eq!(evaluate(construct).minimum_action, "allow", "{construct}");
+    }
+}
+
+#[test]
+fn a_control_flow_construct_still_reviews_the_file_it_writes() {
+    for command in [
+        "if true; then echo hi; fi > notes.txt",
+        "if true; then echo hi > notes.txt; fi",
+    ] {
+        assert_eq!(evaluate(command).minimum_action, "review", "{command}");
     }
 }

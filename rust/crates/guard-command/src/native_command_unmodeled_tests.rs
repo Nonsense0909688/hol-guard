@@ -269,7 +269,6 @@ fn unmodeled_commands_that_move_data_or_hide_programs_keep_the_evaluation_failur
         "gh pr comment 12 --body-file - <<'EOF'\nFixed.\nEOF\ngh pr view 12",
         "sh <<'EOF'\ngh pr view 12\nEOF",
         "command sh -c 'gh pr view 12'",
-        "env GH_HOST=example.com gh pr view 12",
         "fd -x gh pr view {}",
         "for x in a; do PATH=/tmp:$PATH gh pr view 12; done",
     ] {
@@ -288,6 +287,13 @@ fn unmodeled_commands_that_move_data_or_hide_programs_keep_the_evaluation_failur
     assert_eq!(
         decision(&controls, "env CI=1 sh -c 'gh pr view 12'"),
         decision(&controls, "gh pr view 12"),
+    );
+    // An `env` prefix names the same program the bare prefix names, so a
+    // command Guard still cannot model reaches the same floor in either
+    // spelling, for the assignments it carries rather than for the prefix.
+    assert_eq!(
+        decision(&controls, "env GH_HOST=example.com gh pr view 12"),
+        decision(&controls, "GH_HOST=example.com gh pr view 12"),
     );
 }
 
@@ -673,8 +679,11 @@ fn a_case_label_and_an_empty_prefix_keep_their_approval() {
     let controls = controls(serde_json::json!([]), false);
     let mut wrong = Vec::new();
     for command in [
-        "case $MODE in a) echo a;; *) echo b;; esac",
-        "case \"$f\" in *.ts|*.tsx) echo ts;; *) echo other;; esac",
+        // `case $MODE in a) echo a;; *) echo b;; esac` is not here: the flatten
+        // pass reads a `case` whose labels are plain glob text as the lists its
+        // clauses hold, so a construct holding only safe commands allows
+        // outright. One holding a command that carries its own review, such as
+        // the package verb below, still reaches that review.
         "case $1 in start) npm run dev;; stop) npm run stop;; *) echo usage;; esac",
         // `while IFS= read -r line; do echo one; done < list.txt` is not
         // here: the flatten pass reads a redirected `read` loop as the file

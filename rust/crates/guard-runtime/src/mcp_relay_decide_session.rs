@@ -15,10 +15,12 @@
 //!   review OAuth source the daemon binds with it. Under `ask`
 //!   `mode = "observe"` still hands off: the proxy prompts before it observes
 //!   a call, which the resident cannot answer;
-//! - a store holding a policy bundle with a row this harness's lookups reach,
-//!   remote policy rows, or saved rows whose integrity state is not the
-//!   protected one the daemon published. A bundle whose rows are all bound to
-//!   other harnesses hands nothing off: no lookup here reads one.
+//! - a store holding a policy bundle the resident cannot judge the way the
+//!   daemon would, with a row this harness's lookups reach, remote policy
+//!   rows, or saved rows whose
+//!   integrity state is not the protected one the daemon published. A bundle
+//!   whose rows are all bound to other harnesses hands nothing off: no lookup
+//!   here reads one.
 //!
 //! `mode = "observe"` alone hands nothing off: the resident takes its
 //! observe-forward route and its downgrade of a pending saved approval

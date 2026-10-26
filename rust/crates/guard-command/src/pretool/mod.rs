@@ -26,6 +26,10 @@ pub struct PathContext<'a> {
     /// `--pre`, `--hidden` or extra search paths to an `rg` command that
     /// omits `--no-config`. Literal contexts leave this false.
     pub ripgrep_config_absent: bool,
+    /// No step of this command creates a filesystem entry, so a path with
+    /// nothing at it now still has nothing at it when a read runs and cannot
+    /// be a link a peer step planted. Literal contexts leave this false.
+    pub creates_nothing: bool,
     /// What a `psql` read inherits from the session: startup files only a
     /// read without `-X` runs, and the server libpq picks. Literal contexts
     /// leave both false.
@@ -34,8 +38,15 @@ pub struct PathContext<'a> {
 
 mod brace_group;
 mod contained_wrapper;
+mod contained_wrapper_plan;
+pub use contained_wrapper_plan::{
+    contained_wrapper_plan, ContainedOutput, ContainedWrapperCore, ContainedWrapperPlan,
+    CONTAINED_WRAPPER_PLAN_UNSUPPORTED,
+};
 pub(crate) mod curl_reads;
 pub use curl_reads::bound_curl_read_destinations;
+#[cfg(unix)]
+mod contained_exact_shape;
 pub(crate) mod dd_reads;
 mod digest_reads;
 pub(crate) mod docker_reads;
@@ -47,9 +58,10 @@ mod loopback_ports;
 pub(crate) mod port_probes;
 pub(crate) mod rsync_local;
 mod workspace_contained;
-/// The package firewall's extensions, whose permission marks which
-/// ecosystem's manager ran rather than a risk the run carries.
-pub(crate) use workspace_contained::package::PACKAGE_EXTENSIONS;
+#[cfg(unix)]
+pub(crate) use contained_exact_shape::{
+    exact_shape as workspace_exact_shape, runs_whole as workspace_runs_whole,
+};
 #[cfg(unix)]
 pub(crate) use workspace_contained::Shape;
 #[cfg(unix)]
@@ -76,6 +88,7 @@ pub(crate) mod git_apply_check;
 pub(crate) mod git_branch_listing;
 pub(crate) mod git_clean_preview;
 pub(crate) mod git_clone_local;
+pub(crate) mod git_conditional_include;
 mod git_config;
 pub(crate) mod git_config_reads;
 mod git_config_trust;
@@ -91,6 +104,7 @@ mod git_rev_list;
 mod git_search_text;
 pub(crate) mod git_side_record_reads;
 pub(crate) mod git_stash_reads;
+pub(crate) mod git_submodule_reads;
 pub(crate) mod git_tag_listing;
 pub(crate) mod recoverable_removal;
 mod repo_create_reason;
@@ -109,7 +123,9 @@ mod git_routes;
 mod git_session_probe;
 mod git_worktree;
 pub(crate) mod github_conversation;
+mod glob_words;
 mod guard_diagnostics;
+mod list_wrapper;
 mod listing_reads;
 mod listing_temporary;
 mod lookup_reads;
@@ -134,7 +150,7 @@ mod apply_patch_writes;
 mod data_heredocs;
 mod lockfile_install;
 mod omp_hashline_writes;
-mod pipe_attacks;
+pub(crate) mod pipe_attacks;
 mod pure_expression;
 mod read_paths;
 mod source_reads;
@@ -161,6 +177,7 @@ mod secret_aliases;
 pub(crate) mod sed_edits;
 mod segment_proof;
 mod shell_script;
+mod sink_peel;
 mod stderr_merge;
 mod stdin_filters;
 mod symlink_writes;
@@ -196,7 +213,7 @@ pub use safe_scalar::PsqlEnvironment;
 #[cfg_attr(not(unix), allow(unused_imports))]
 pub(crate) use script_content::launch_loopback_ports;
 pub(crate) use script_content::{
-    activation_script_text, backgrounded_launch, foreground_job, prefixed_launch,
+    activation_script_text, backgrounded_launch, models_exactly, prefixed_launch, sequential_jobs,
     sole_program_sources, sourced_program_sources, sourcing_bounded_sources,
 };
 pub(crate) use segment_proof::{benign_command_segments, without_stderr_merge};
@@ -779,20 +796,43 @@ pub(super) fn evaluate_pre_tool_with_execution_context(
     deadline: Option<std::time::Instant>,
     execution_environment: Option<&guard_contracts::GuardExecutionEnvironmentV1>,
 ) -> Result<PreToolDecisionV1, String> {
+    evaluate_rewritten(request, home_dir, cwd, deadline, execution_environment, 0)
+}
+
+/// How many rewrites one submission may go through. A wrapper around a loop
+/// needs two - the wrapper comes off, then the loop unrolls - and the bound
+/// stops a recognizer whose output another recognizer reads from running
+/// without end.
+const MAX_REWRITE_ROUNDS: usize = 3;
+
+/// The command list a rewrite reads this text as, in the order the
+/// recognizers are tried.
+fn rewritten_command_list(command: &str) -> Option<String> {
+    for_loop_unroll::unroll(command)
+        .or_else(|| control_flow_flatten::flatten(command))
+        .or_else(|| list_wrapper::unwrapped(command))
+}
+
+fn evaluate_rewritten(
+    request: &CommandModelRequestV1,
+    home_dir: Option<&str>,
+    cwd: Option<&str>,
+    deadline: Option<std::time::Instant>,
+    execution_environment: Option<&guard_contracts::GuardExecutionEnvironmentV1>,
+    round: usize,
+) -> Result<PreToolDecisionV1, String> {
     let decision =
         evaluate_single_command(request, home_dir, cwd, deadline, execution_environment)?;
     if request.dialect != "posix" || decision.minimum_action != "review" {
         return Ok(decision);
     }
-    // A loop over literal words is its unrolled command list, and a
-    // conditional or a `while` loop is the lists written inside it. Either
-    // rewrite goes through the same proofs and replaces the construct's
-    // decision: an allow there admits the construct, a block is never
-    // softened, and a review carries the rewritten model so later layers
-    // judge modeled commands.
-    let Some(unrolled) = for_loop_unroll::unroll(&request.command)
-        .or_else(|| control_flow_flatten::flatten(&request.command))
-    else {
+    // A loop over literal words is its unrolled command list, a conditional
+    // or a `while` loop is the lists written inside it, and a `!`-negated or
+    // `&`-backgrounded list is that list on its own. Each rewrite goes
+    // through the same proofs and replaces the construct's decision: an allow
+    // there admits the construct, a block is never softened, and a review
+    // carries the rewritten model so later layers judge modeled commands.
+    let Some(rewritten) = rewritten_command_list(&request.command) else {
         return Ok(ungrouped_decision(
             request,
             decision,
@@ -802,24 +842,41 @@ pub(super) fn evaluate_pre_tool_with_execution_context(
             execution_environment,
         ));
     };
-    let unrolled_request = CommandModelRequestV1 {
-        command: unrolled,
+    let rewritten_request = CommandModelRequestV1 {
+        command: rewritten,
         ..request.clone()
     };
-    match evaluate_single_command(
-        &unrolled_request,
-        home_dir,
-        cwd,
-        deadline,
-        execution_environment,
-    ) {
-        Ok(unrolled)
+    // What a rewrite leaves behind can be a construct of its own:
+    // `for f in a b; do echo "$f"; done &` is the loop once the wrapper is
+    // gone, and `! (cat Cargo.toml)` is a group. Reading the rewritten text
+    // through this same pass gives it every proof its bare spelling has,
+    // rather than only the proofs that read one plain command list.
+    let rewritten = if round + 1 < MAX_REWRITE_ROUNDS {
+        evaluate_rewritten(
+            &rewritten_request,
+            home_dir,
+            cwd,
+            deadline,
+            execution_environment,
+            round + 1,
+        )
+    } else {
+        evaluate_single_command(
+            &rewritten_request,
+            home_dir,
+            cwd,
+            deadline,
+            execution_environment,
+        )
+    };
+    match rewritten {
+        Ok(rewritten)
             if matches!(
-                unrolled.minimum_action.as_str(),
+                rewritten.minimum_action.as_str(),
                 "allow" | "review" | "block"
             ) =>
         {
-            Ok(unrolled)
+            Ok(rewritten)
         }
         _ => Ok(decision),
     }
@@ -830,6 +887,14 @@ pub(super) fn evaluate_pre_tool_with_execution_context(
 /// `{ ...; }`. `None` leaves the command exactly as it was submitted.
 pub(crate) fn ungrouped_command_list(command: &str) -> Option<String> {
     trailing_group::unwrap(command).or_else(|| brace_group::unwrap(command))
+}
+
+/// The command list a trailing group runs, when that list run in the group's
+/// place executes exactly the same commands. `ungrouped_command_list` may
+/// flatten a conditional subshell into a list that runs more than the group
+/// does, which a decision can read but a sink cannot execute.
+pub(crate) fn runnable_ungrouped_command_list(command: &str) -> Option<String> {
+    trailing_group::unwrap_for_execution(command).or_else(|| brace_group::unwrap(command))
 }
 
 /// A trailing subshell or brace group is its command list, so that list's
@@ -1107,6 +1172,7 @@ fn evaluate_single_command(
         &data_heredocs::without_data_bodies(normalized),
         git_search_text::command_without_patterns(&model),
     ) || secret_aliases::names_secret_alias(&model, context)
+        || glob_words::names_hidden_glob(&model, context)
     {
         return Ok(pretool_decision(
             model,

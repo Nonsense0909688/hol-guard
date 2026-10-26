@@ -686,7 +686,9 @@ class LocalCliApiService:
             )
         if identity is None:
             raise LocalCliApiError(400, code, message)
-        commands, help_status, source_path = _discover_from_command(command, identity, operator_cwd, home_dir)
+        commands, help_status, source_path = _discover_from_command(
+            command, identity, operator_cwd, home_dir, self._store.guard_home
+        )
         commands = merge_profile_commands(identity.name, commands)
         self._store.record_local_cli_observation(
             identity,
@@ -1357,7 +1359,17 @@ def _discover_from_command(
     identity: UnlistedCliIdentity,
     cwd: Path,
     home_dir: Path,
+    guard_home: Path,
 ) -> tuple[tuple[LocalCliCommand, ...], str, str | None]:
+    """Discover ``identity``'s commands through ``guard_home``'s own resident.
+
+    ``guard_home`` is the daemon's store home, not the operator's home
+    directory. A daemon started on an overridden home must read help text
+    through the resident that home runs; the default home's resident may not
+    exist, and provisioning one there would touch an install this daemon does
+    not serve.
+    """
+
     source_path: str | None = None
     for candidate in local_cli_recognition_candidates(command, cwd=cwd, home_dir=home_dir):
         invocation = help_invocation_for_command(candidate, cwd=cwd, home_dir=home_dir)
@@ -1370,7 +1382,7 @@ def _discover_from_command(
         if tool_path is None:
             continue
         source_path = argv[1] if matched.kind == "script" and len(argv) >= 2 else tool_path
-        commands, help_status = discover_local_cli_commands(matched, argv)
+        commands, help_status = discover_local_cli_commands(matched, argv, guard_home=guard_home)
         return commands, help_status, source_path
     return default_local_cli_commands(identity.name), "failed", source_path
 

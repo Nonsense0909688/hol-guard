@@ -42,12 +42,39 @@ _CLASSIFIERS = {
 
 def test_the_fixture_is_the_shape_both_sides_read() -> None:
     assert _VECTORS["schema"] == "redact-text-parity.v1"
-    assert len(_VECTORS["cases"]) >= 23
+    assert len(_VECTORS["cases"]) >= 32
 
 
 def test_every_rule_has_a_recorded_case() -> None:
     fired = {classifier for case in _VECTORS["cases"] for classifier in case["classifiers"]}
     assert fired == _CLASSIFIERS
+
+
+# The operator boundary is only visible in these cases: each one records a value
+# ending at a different shell operator, so a count alone would let any of them be
+# dropped and replaced by a duplicate of an existing `secret-env` case.
+_BOUNDED_VALUE_CASES = (
+    "a quoted value keeps an operator inside it",
+    "a single-quoted value keeps an operator inside it",
+    "an assignment ends at a pipe",
+    "an assignment ends at a background operator",
+    "an escaped operator inside a value still ends it",
+)
+
+
+def test_every_operator_boundary_keeps_its_own_case() -> None:
+    names = [case["name"] for case in _VECTORS["cases"]]
+    for required in _BOUNDED_VALUE_CASES:
+        assert names.count(required) == 1, required
+
+
+def test_a_quoted_value_keeps_the_operators_inside_it() -> None:
+    """The quoted alternative is why a value may hold `&&` and still be masked whole."""
+    quoted = [case for case in _VECTORS["cases"] if "quoted value keeps an operator" in case["name"]]
+    assert len(quoted) == 2, [case["name"] for case in _VECTORS["cases"]]
+    for case in quoted:
+        assert case["text"].count("*****") == 1, case["name"]
+        assert case["text"].endswith("run"), case["name"]
 
 
 @pytest.mark.parametrize("case", _VECTORS["cases"], ids=lambda case: case["name"])

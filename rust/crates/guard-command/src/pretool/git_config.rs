@@ -101,9 +101,13 @@ pub(super) fn execution_free_paging(
             | "rev-list"
             | "shortlog"
             | "check-ignore"
+            | "count-objects"
+            | "check-attr"
+            | "sparse-checkout"
             | "apply"
             | "bisect"
             | "notes"
+            | "submodule"
     ) {
         return None;
     }
@@ -126,14 +130,21 @@ pub(super) fn execution_free_paging(
     {
         return None;
     }
-    if matches!(operation, "shortlog" | "check-ignore")
-        && !super::git_listing_reads::read_form(operation, &remaining[1..])
+    if matches!(
+        operation,
+        "shortlog" | "check-ignore" | "count-objects" | "check-attr" | "sparse-checkout"
+    ) && !super::git_listing_reads::read_form(operation, &remaining[1..])
     {
         return None;
     }
     if matches!(operation, "bisect" | "notes")
         && !super::git_side_record_reads::read_form(operation, &remaining[1..])
     {
+        return None;
+    }
+    // Only the status form prints; every other submodule verb moves work,
+    // and the recursive walk reads configuration this probe never saw.
+    if operation == "submodule" && !super::git_submodule_reads::read_form(&remaining[1..]) {
         return None;
     }
     // Only the patch check reads; every other apply writes, and its own
@@ -332,7 +343,7 @@ fn probe(
             "config",
             "--null",
             "--get-regexp",
-            "^(core\\.fsmonitor|core\\.excludesfile|core\\.pager|pager\\..*|diff\\.external|diff\\..*\\.(command|textconv)|filter\\..*\\.(process|clean|smudge)|log\\.showsignature|gpg\\.program|gpg\\..*\\.program|format\\.pretty|pretty\\..*|grep\\.fallbacktonoindex|extensions\\.partialclone|remote\\..*\\.promisor)$",
+            "^(core\\.fsmonitor|core\\.excludesfile|core\\.attributesfile|core\\.pager|pager\\..*|diff\\.external|diff\\..*\\.(command|textconv)|filter\\..*\\.(process|clean|smudge)|log\\.showsignature|gpg\\.program|gpg\\..*\\.program|format\\.pretty|pretty\\..*|grep\\.fallbacktonoindex|extensions\\.partialclone|remote\\..*\\.promisor)$",
         ])
 ,
         deadline, CONFIG_LIMIT,
@@ -398,7 +409,8 @@ fn probe(
         // `clean` prints its preview, and `apply` its check report, without
         // a pager.
         "status" | "hash-object" | "merge-base" | "ls-tree" | "cat-file" | "show-ref"
-        | "for-each-ref" | "rev-list" | "describe" | "clean" | "apply" => false,
+        | "for-each-ref" | "rev-list" | "describe" | "clean" | "apply" | "count-objects"
+        | "check-attr" | "sparse-checkout" | "submodule" => false,
         "config" => super::git_config_reads::pages_by_default(&remaining[1..]),
         _ => true,
     };
@@ -464,8 +476,10 @@ fn probe(
             // tree, and a patch check refreshes it before it reads the files
             // the patch names.
             "core.fsmonitor" => {
-                (matches!(operation, "status" | "diff" | "grep" | "clean" | "apply")
-                    || super::git_listing_reads::reads_index(operation, &remaining[1..])
+                (matches!(
+                    operation,
+                    "status" | "diff" | "grep" | "clean" | "apply" | "submodule"
+                ) || super::git_listing_reads::reads_index(operation, &remaining[1..])
                     || super::git_history_reads::cleans_working_tree(operation, &remaining[1..]))
                     && !disabled
             }
@@ -477,6 +491,14 @@ fn probe(
                 !value.is_empty()
                     && super::git_listing_reads::prints_rule_source(operation, &remaining[1..])
             }
+            // An attribute check prints the attribute names and values of
+            // every rule that matches the paths it was given, and a configured
+            // attributes file names anything. Git splits each of its lines on
+            // whitespace and reads the first word as a pattern and the rest as
+            // attributes, so a file of credentials becomes attributes the
+            // check prints. The check keeps its review until someone reads
+            // that setting.
+            "core.attributesfile" => !value.is_empty() && operation == "check-attr",
             "core.pager" => {
                 configured_paging
                     && !git_pager_disabled
@@ -564,7 +586,7 @@ fn expand_home_targets(leading: &[String], home: &Path) -> Vec<String> {
     expanded
 }
 
-fn disabled_boolean(value: &str) -> bool {
+pub(super) fn disabled_boolean(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "0" | "false" | "no" | "off"

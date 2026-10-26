@@ -150,18 +150,38 @@ command evaluation `command_effect_decide` uses, under the resident's own
 admitted control snapshot, with hypothetical enabled permissions, then keeps
 only the permissions the allow needs. It offers a hint only when the pause is
 the extension review itself (`native_command_review_required`), so a fixed
-PreTool floor never gets one. Python
-(`native_extension_allow_hint.py`) builds the query from the evidence the review
-already holds and shape-checks the answer; with no resident there is no hint
-and no Python recomputation. The one remaining mirror is the cheap gate that
-decides whether a paused review is worth asking about at all (not under an
-authority failure, held for review, and the extension review itself rather than
-a fixed floor): `compute_extension_allow_hint`, the resident's
-`allow_hint_candidate` check and `native_review_allow_hint._definite_review_binding`
-state the same rule, the resident stays authoritative, and the recorded vectors in
-`rust/crates/guard-runtime/testdata/hook_direct_review/` pin the resident and
-daemon copies together. The settle proofs and the counterfactual that verifies a
-hint before it is stored are Rust-owned.
+PreTool floor never gets one. Python only shape-checks the answer; with no
+resident there is no hint and no Python recomputation. The gate that decides
+whether a paused review is worth asking about at all (not under an authority
+failure, held for review, and the extension review itself rather than a fixed
+floor) is the resident's `allow_hint_candidate`, and the recorded vectors in
+`rust/crates/guard-runtime/testdata/hook_direct_review/` pin it. The settle
+proofs and the counterfactual that verifies a hint before it is stored are
+Rust-owned. A review the direct hook lane queues itself stores its hints without
+a daemon round trip: `rust/crates/guard-runtime/src/hook_direct_review_hint.rs`
+repeats the review with extension evidence under the admitted snapshot, inside
+one command authority lease, and asks `extension_allow_hint_op` only when that
+review matches the one that paused. A review the daemon queues asks the
+`extension_review_hint` resident op
+(`rust/crates/guard-runtime/src/hook_direct_review_hint_op.rs`) for the same
+hints, handing it the paused result; a pending row read back with nothing
+stored asks the same op without one, and the resident reviews the command once
+for both hints. `native_review_allow_hint.py` only picks the command and launch
+directory and shape-checks the answer. The coverage hint
+(`rust/crates/guard-runtime/src/extension_coverage_hint.rs`) rides on every
+queued review an extension observed; Python only validates and delivers it.
+
+A review due only to non-recognition of a command that launches a local CLI
+this device has not set up is a connector-setup review, and the direct hook lane
+queues it as well (`rust/crates/guard-runtime/src/hook_direct_review_connector.rs`).
+It asks the `local_cli_hook` resident op for the connector, as
+`native_review_setup_connector` does, stores the row under the connector's
+`queue_group_id` with the connector-setup hint in place of the extension hints,
+shows the agent the `connector_setup_reason` text, and records the connector's
+setup context. The resident cannot raise a desktop notice, so it hands the stored
+request id and the CLI name to the evidence drain, which raises the notice from
+the stored row. Any lookup the resident cannot spell exactly as the daemon would,
+and any failed lookup, leaves the review to the daemon.
 
 The recommendation shown with a pending review is that stored hint re-checked
 on every read, and the resident owns it too. The
@@ -449,6 +469,27 @@ token itself and nothing it contains can pass as a substituted scalar.
 `codex_hook_identity.py` now only names what is being identified;
 `native_codex_hook_identity.py` ships it across and fails closed.
 
+What a local CLI's `--help` means is read in the resident
+(`local-cli-help-parse-v1`, in `local_cli_help.rs`). Python ran the prose
+grammar: which line opens a command section and which closes it, when an
+indented line is a command row rather than a wrapped description, which tokens
+are commands and which are option spellings, and how a row's description is
+recovered from the columns after it. That grammar decides which commands an
+operator is offered a grant over, so a second copy of it would be a second
+answer to the same question. Python now only probes - it runs the CLI, collects
+the help text each subcommand prints, and sends the text; the resident returns
+the commands it names and their descriptions.
+
+Two consequences are worth naming. Discovery fails closed: a resident that
+cannot answer leaves the CLI with no commands found, and the grant falls back
+to its "other" bucket rather than to a Python parse. And the port keeps a
+Python quirk rather than quietly fixing it - a two-word section header such as
+`Other things:` reads as a command row (`Other`, described as `things:`) and
+leaves the section open, while a one-word `Options:` closes it. Changing that
+would move which commands an existing grant covers, so
+`a_two_word_header_reads_as_a_row_and_keeps_the_section_open` pins the
+behaviour until it is changed deliberately.
+
 ## Harness route inventory
 
 The v2 contract maps all harnesses in `HARNESS_CONTRACTS`, including harnesses
@@ -459,6 +500,8 @@ events.
 Current material gaps include:
 
 - Copilot and Cursor event aliases are normalized by the Rust raw edge.
+- The Rust raw edge renders Guard's Claude Code notice on a reviewed
+  `UserPromptSubmit` outside Watch; the daemon returns the edge response as is.
 - Non-command PreToolUse and native `review` remain native decisions; the
   harness bridge renders an unsupported review as a conservative deny.
 - OpenCode, Grok, Hermes, OpenClaw, ZCode, Gemini, and Antigravity expose partial
@@ -480,18 +523,12 @@ Current material gaps include:
   the opaque challenge and forward the external artifact, but it never signs,
   authorizes, or persists approval state.
 - Rust owns the reuse of a saved approval on the artifact hook: the resident
-  (`artifact_reuse_step`) answers a plan of effects (claim, revalidate, settled)
-  and Python only runs them. A claim that wins is always followed by its
-  revalidation with no resident call between the two, and a resident that
-  fails or answers a malformed plan fails closed to the host outage. The one
-  Python decision left is the package fallback floor, which never ends weaker
-  than the recomputed action.
-- Rust owns the CLI hook's verdict for Claude Code's permission dialog: the
-  resident (`claude_permission_verdict`) picks no decision, the Guard approval
-  question, a review that defers to Claude's dialog, or a deny, and asks for
-  the runtime artifact's policy only when the verdict rests on it. Python
-  gathers that policy, renders the reason, copy and envelope, and answers a
-  verdict the resident cannot supply with the host outage response.
+  (`artifact_reuse_step`) answers a plan of effects (claim, revalidate,
+  settled). The CLI executor that ran this plan, and its package fallback
+  floor, are gone: the CLI hook answers through the daemon review path.
+- The CLI hook answers Claude Code's permission dialog through the daemon
+  review path, as the bridge does. No Python caller asks the resident's
+  `claude_permission_verdict` or `hook_route` any more.
 
 ## No-environment production contract
 

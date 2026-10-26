@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +18,19 @@ from .cursor_hook_rebind import rebind_stale_cursor_hooks
 from .shim_refresh import refresh_stale_harness_shims
 from .shims import package_shim_dashboard_status, package_shim_status, repair_package_shims
 from .store import GuardStore
+
+# A hook command launches the frozen build's runtime from its content-addressed
+# durable copy, ``native-runtime/<sha256>/hol-guard-runtime[.exe]``; JSON
+# configs may escape the separator. Requiring the executable name keeps a
+# preserved user field that only names the directory from counting as a pin.
+_PINNED_RUNTIME = re.compile(r"native-runtime[/\\]+([0-9a-f]{64})[/\\]+hol-guard-runtime(?:\.exe)?(?![\w.-])")
+_PINNED_SCAN_CHUNK_BYTES = 1024 * 1024
+# Guard writes hook artifacts of a few kilobytes. A manifest path that names a
+# far larger file is not one of them; stop there rather than read it to EOF.
+_PINNED_SCAN_MAX_BYTES = 16 * _PINNED_SCAN_CHUNK_BYTES
+_PINNED_SCAN_CARRY = 256
+_MANIFEST_SCAN_MAX_PATHS = 16
+_MANIFEST_SCAN_MAX_NODES = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,12 +82,105 @@ def _package_shim_reconciliation_status(context: HarnessContext) -> dict[str, ob
     return status
 
 
+def _current_durable_runtime_digest() -> str | None:
+    """The digest a frozen build's hook commands should pin, or None.
+
+    Only a frozen build writes ``native-runtime/<sha256>`` into hook commands,
+    so a source install never repins them.
+    """
+
+    if not getattr(sys, "frozen", False):
+        return None
+    from .native_runtime import native_runtime_status
+
+    status = native_runtime_status()
+    if not status.available or not status.compatible or status.identity is None:
+        return None
+    return status.identity.sha256
+
+
+def _manifest_file_paths(manifest: object) -> tuple[Path, ...]:
+    """Every existing file an install manifest names, bounded.
+
+    Harnesses record their artifacts under their own keys: Cursor keeps a list
+    of written files, OpenCode names ``managed_config_path`` and Hermes points
+    ``config_path`` at its YAML while its hook lives in ``pretool_hook_path``.
+    Reading every string the manifest holds covers all of them without a
+    per-harness table that would silently miss the next adapter.
+    """
+
+    found: list[Path] = []
+    seen: set[str] = set()
+    pending: list[object] = [manifest]
+    nodes = 0
+    while pending and len(found) < _MANIFEST_SCAN_MAX_PATHS and nodes < _MANIFEST_SCAN_MAX_NODES:
+        node = pending.pop()
+        nodes += 1
+        if isinstance(node, Mapping):
+            pending.extend(node.values())
+            continue
+        if isinstance(node, (list, tuple)):
+            pending.extend(node)
+            continue
+        if not isinstance(node, str) or not node or node in seen:
+            continue
+        seen.add(node)
+        try:
+            candidate = Path(node)
+            if not candidate.is_absolute() or not candidate.is_file():
+                continue
+        except (OSError, ValueError):
+            # A persisted path can hold an embedded NUL or an unreadable
+            # mount; that is this harness's problem, not the whole pass's.
+            continue
+        found.append(candidate)
+    return tuple(found)
+
+
+def _names_stale_runtime(path: Path, current_digest: str) -> bool:
+    """Whether one Guard-owned artifact still launches an older runtime copy."""
+
+    # Each chunk keeps the previous tail so a pin can span the boundary.
+    pinned: set[str] = set()
+    tail = ""
+    scanned = 0
+    try:
+        with path.open("rb") as handle:
+            while scanned < _PINNED_SCAN_MAX_BYTES and (chunk := handle.read(_PINNED_SCAN_CHUNK_BYTES)):
+                scanned += len(chunk)
+                text = tail + chunk.decode("utf-8", errors="replace")
+                pinned.update(match.group(1) for match in _PINNED_RUNTIME.finditer(text))
+                tail = text[-_PINNED_SCAN_CARRY:]
+    except (OSError, ValueError):
+        return False
+    return bool(pinned) and pinned != {current_digest}
+
+
+def _pins_stale_native_runtime(install: Mapping[str, object], current_digest: str | None) -> bool:
+    """Whether the install's harness artifacts still launch an older runtime.
+
+    The resident refuses a hook bridge whose runtime digest differs from its
+    own, so a stale pin silently sends every hook to the slower Python path.
+    """
+
+    if current_digest is None:
+        return False
+    manifest = install.get("manifest")
+    if not isinstance(manifest, Mapping):
+        return False
+    return any(_names_stale_runtime(path, current_digest) for path in _manifest_file_paths(manifest))
+
+
 def _managed_install_needs_artifact_repair(
     harness: str,
     *,
     context: HarnessContext,
     verified: Mapping[str, bool],
+    install: Mapping[str, object],
+    current_digest: str | None,
 ) -> bool:
+    if _pins_stale_native_runtime(install, current_digest):
+        return True
     if harness == "grok":
         from .cli.install_commands import grok_hooks_protection_ready
 
@@ -86,7 +194,10 @@ def _managed_install_artifacts_ready(
     context: HarnessContext,
     install: Mapping[str, object],
     store: GuardStore,
+    current_digest: str | None,
 ) -> bool:
+    if _pins_stale_native_runtime(install, current_digest):
+        return False
     if harness == "grok":
         from .cli.install_commands import grok_hooks_protection_ready
 
@@ -103,6 +214,7 @@ def repair_failing_managed_harness_hooks(
 
     installs: list[Mapping[str, object]] = list(store.list_managed_installs())
     verified = _live_hook_verification(installs, store)
+    current_digest = _current_durable_runtime_digest()
     repaired: list[str] = []
     failed: list[str] = []
     for install in installs:
@@ -116,7 +228,13 @@ def repair_failing_managed_harness_hooks(
             home_dir=home_dir,
             workspace_dir=Path(workspace).expanduser() if workspace is not None else None,
         )
-        if not _managed_install_needs_artifact_repair(harness, context=context, verified=verified):
+        if not _managed_install_needs_artifact_repair(
+            harness,
+            context=context,
+            verified=verified,
+            install=install,
+            current_digest=current_digest,
+        ):
             continue
         try:
             apply_managed_install(
@@ -137,6 +255,7 @@ def repair_failing_managed_harness_hooks(
             context=context,
             install=refreshed,
             store=store,
+            current_digest=current_digest,
         ):
             failed.append(harness)
             continue

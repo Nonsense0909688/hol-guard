@@ -118,8 +118,13 @@ fn matches_secret_assignment(value: &str) -> bool {
         .unwrap_or(true)
 }
 
-/// `_SENSITIVE_KEY_RE.search(key)` with CPython's case folding.
+/// `_is_sensitive_key(key)` with CPython's case folding.
 fn matches_sensitive_key(key: &str) -> bool {
+    // `evidenceAuthority` names who vouches for trust evidence, not a
+    // credential; only that exact key is exempt, as in `_is_sensitive_key`.
+    if key.eq_ignore_ascii_case("evidenceAuthority") {
+        return false;
+    }
     SENSITIVE_KEY_RE.is_match(&fold_python_case_extras(key))
 }
 

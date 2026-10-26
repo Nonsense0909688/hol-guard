@@ -125,9 +125,12 @@ fn segment_runs_helpers(original: &crate::CommandSegmentV1, context: PathContext
                         // A stash listing is a log that pages under
                         // pager.stash, and `stash show` runs the diff drivers.
                         "stash" => true,
-                        // A shortlog pages under pager.shortlog, and both
-                        // listings read the repository's configuration.
-                        "shortlog" | "check-ignore" => true,
+                        // A shortlog pages under pager.shortlog, a count and
+                        // an attribute check page under their own pager.<name>,
+                        // and every listing reads the repository's
+                        // configuration.
+                        "shortlog" | "check-ignore" | "count-objects" | "check-attr"
+                        | "sparse-checkout" => true,
                         // A bisect log replays through the pager, and a note
                         // prints through it too; both honor core.pager.
                         "bisect" | "notes" => true,
@@ -137,6 +140,12 @@ fn segment_runs_helpers(original: &crate::CommandSegmentV1, context: PathContext
                         // Reading the files the patch names refreshes the
                         // index, which starts a configured core.fsmonitor.
                         "apply" => true,
+                        // A status line is printed from the superproject,
+                        // whose index it reads, so a configured
+                        // core.fsmonitor there can start. The read forms are
+                        // the only ones that reach here, because the proof
+                        // that admits the subcommand screens them first.
+                        "submodule" => true,
                         _ => false,
                     }
                 })

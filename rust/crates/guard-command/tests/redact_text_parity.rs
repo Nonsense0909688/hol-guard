@@ -15,12 +15,37 @@ use serde_json::Value;
 
 const VECTORS: &str = include_str!("../../../../tests/fixtures/redact-text-parity.v1.json");
 
+/// The operator boundary is only visible in these cases: each one records a
+/// value ending at a different shell operator, so a count alone would let any
+/// of them be dropped and replaced by a duplicate of an existing `secret-env`
+/// case. The Python suite requires the same names.
+const BOUNDED_VALUE_CASES: [&str; 5] = [
+    "a quoted value keeps an operator inside it",
+    "a single-quoted value keeps an operator inside it",
+    "an assignment ends at a pipe",
+    "an assignment ends at a background operator",
+    "an escaped operator inside a value still ends it",
+];
+
+#[test]
+fn every_operator_boundary_keeps_its_own_case() {
+    let vectors: Value = serde_json::from_str(VECTORS).expect("vectors parse");
+    let cases = vectors["cases"].as_array().expect("cases array");
+    for required in BOUNDED_VALUE_CASES {
+        let recorded = cases
+            .iter()
+            .filter(|case| case["name"].as_str() == Some(required))
+            .count();
+        assert_eq!(recorded, 1, "{required}");
+    }
+}
+
 #[test]
 fn recorded_inputs_redact_to_their_recorded_results() {
     let vectors: Value = serde_json::from_str(VECTORS).expect("vectors parse");
     assert_eq!(vectors["schema"].as_str(), Some("redact-text-parity.v1"));
     let cases = vectors["cases"].as_array().expect("cases array");
-    assert!(cases.len() >= 23);
+    assert!(cases.len() >= 32);
 
     for case in cases {
         let name = case["name"].as_str().unwrap_or_default();

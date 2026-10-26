@@ -48,6 +48,7 @@ from .review_fixtures import (
     seed_protected_codex_hooks,
 )
 from .runner import _fixture_replacements, _scenario_prompt, _watch_binding
+from .runtime_cases import stage_runtime_cases
 from .script_cases import stage_script_cases
 from .session_folder import seed_session_folder
 from .supply_chain import stage_supply_chain
@@ -149,6 +150,7 @@ def run_harness_case(
     fixture = create_fixture(root / scenario_fixture_name(scenario.id), realistic=realistic, scenario_id=scenario.id)
     stage_supply_chain(fixture.workspace, scenario.id)
     stage_script_cases(fixture.workspace, scenario.id, fixture.home, fixture.canary)
+    stage_runtime_cases(fixture.root / "guard-home", fixture.workspace, scenario.id)
     stage_bash_lifecycle(fixture.workspace, scenario.id)
     seed_session_folder(fixture.home, stage_directory(fixture.root), scenario.id)
     private = fixture.root / "private-evidence"
@@ -205,9 +207,13 @@ def run_harness_case(
                 guard_home.mkdir(mode=0o700)
                 (guard_home / "config.toml").write_text('protection_posture = "watch"\nmode = "observe"\n')
             if scenario.oracle in {"approved-retry", BASH_LIFECYCLE_ORACLE}:
-                # Reviewing ordinary commands is this lane's point: the approve-then-retry
+                # Reviewing ordinary actions is this lane's point: the approve-then-retry
                 # path has no other way in, because a hard block never queues an approval.
-                case["review_policy"] = write_review_config(guard_home)
+                # A case whose repeated action is a file-tool call needs the default floor;
+                # the subprocess floor the shell cases raise never reaches a file tool.
+                case["review_policy"] = write_review_config(
+                    guard_home, file_tool="bash" not in scenario.required_tools
+                )
             if CONNECTOR_PROFILE in scenario.profiles:
                 connector = stage_connector_case(scenario.oracle, fixture.root, fixture.home, guard_home, harness)
                 connector_state = state_digest(connector.state_dir)

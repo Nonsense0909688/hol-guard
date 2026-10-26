@@ -42,6 +42,16 @@ pub(super) struct RuleCheck<'a> {
     pub(super) home_dir: &'a str,
     pub(super) guard_home: &'a str,
     pub(super) recording_only: bool,
+    /// The daemon's home and environment, when the caller is not the process
+    /// the launch runs under.
+    pub(super) launch_env: Option<LaunchEnv<'a>>,
+}
+
+/// The home and environment a launch resolves against.
+#[derive(Clone, Copy)]
+pub(super) struct LaunchEnv<'a> {
+    pub(super) user_home: &'a str,
+    pub(super) env: &'a BTreeMap<String, String>,
 }
 
 /// The harness response the daemon returns for `answered` once it checked
@@ -62,7 +72,8 @@ pub(super) fn custom_rule_response(
     {
         return Ok(None);
     }
-    let Some(launched) = launch_for(payload, check.workspace, check.home_dir)? else {
+    let Some(launched) = launch_for(payload, check.workspace, check.home_dir, check.launch_env)?
+    else {
         return Ok(None);
     };
     match grant(&launched, check.home_dir, check.guard_home)? {
@@ -80,17 +91,6 @@ pub(super) fn custom_rule_response(
                 .ok_or(())
         }
     }
-}
-
-/// Whether the daemon would read a custom grant for this `PreToolUse`: the
-/// payload names a command and a launch directory, and the command launches a
-/// local CLI. `Err` is any failure the daemon could still resolve to a launch.
-pub(super) fn launches_local_cli(
-    payload: &Map<String, Value>,
-    workspace: &str,
-    home_dir: &str,
-) -> Result<bool, ()> {
-    launch_for(payload, workspace, home_dir).map(|launched| launched.is_some())
 }
 
 /// A local CLI launch with the invocation the daemon derives its command
@@ -122,6 +122,7 @@ fn launch_for<'a>(
     payload: &'a Map<String, Value>,
     workspace: &str,
     home_dir: &str,
+    launch_env: Option<LaunchEnv<'_>>,
 ) -> Result<Option<Launched<'a>>, ()> {
     let Some(command) = pre_tool_command(payload)? else {
         return Ok(None);
@@ -130,7 +131,7 @@ fn launch_for<'a>(
         return Ok(None);
     };
     Ok(
-        local_launch(command, &cwd, home_dir)?.map(|launch| Launched {
+        local_launch(command, &cwd, home_dir, launch_env)?.map(|launch| Launched {
             launch,
             command,
             cwd,
@@ -141,25 +142,36 @@ fn launch_for<'a>(
 /// The launch identity the daemon derives: the package script's, else the
 /// first unlisted CLI's. `Err` is any failure the daemon blocks as
 /// unverified.
-fn local_launch(command: &str, cwd: &str, home_dir: &str) -> Result<Option<Launch>, ()> {
+fn local_launch(
+    command: &str,
+    cwd: &str,
+    home_dir: &str,
+    launch_env: Option<LaunchEnv<'_>>,
+) -> Result<Option<Launch>, ()> {
     let package = package_json_scripts(command, cwd, home_dir).map_err(|_| ())?;
     block::launch(package, || {
-        // The resident inherits the daemon's `PATH` and home; the daemon
-        // resolves the launch against its own environment.
+        let identify_in = |user_home: &str, env: &BTreeMap<String, String>| {
+            identify(&Request {
+                command_text: command,
+                cwd,
+                home_dir: Some(home_dir),
+                user_home,
+                compound: false,
+                env,
+                budget_ms: IDENTIFY_BUDGET_MS,
+            })
+            .map_err(|_| ())
+        };
+        // The daemon resolves the launch against its own environment. The
+        // direct lane runs inside it; the resident is told it.
+        if let Some(launch_env) = launch_env {
+            return identify_in(launch_env.user_home, launch_env.env);
+        }
         let user_home = std::env::var("HOME").map_err(|_| ())?;
         let env: BTreeMap<String, String> = std::env::vars_os()
             .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
             .collect();
-        identify(&Request {
-            command_text: command,
-            cwd,
-            home_dir: Some(home_dir),
-            user_home: &user_home,
-            compound: false,
-            env: &env,
-            budget_ms: IDENTIFY_BUDGET_MS,
-        })
-        .map_err(|_| ())
+        identify_in(&user_home, &env)
     })
 }
 
@@ -204,7 +216,8 @@ fn grant(launched: &Launched<'_>, home_dir: &str, guard_home: &str) -> Result<Ve
 /// leaves the review standing here, as the daemon's own lane does.
 pub(super) fn review_grant(check: &RuleCheck<'_>) -> Option<ReviewVerdict> {
     let payload = check.payload?;
-    let launched = launch_for(payload, check.workspace, check.home_dir).ok()??;
+    let launched =
+        launch_for(payload, check.workspace, check.home_dir, check.launch_env).ok()??;
     let answer = grant_answer(&launched, "review", check.home_dir, check.guard_home).ok()?;
     match block::review_verdict(&launched.launch, answer.as_ref()) {
         ReviewVerdict::Unchanged => None,
@@ -234,7 +247,10 @@ fn pre_tool_command(payload: &Map<String, Value>) -> Result<Option<&str>, ()> {
 
 /// The daemon's launch directory: the payload's non-blank `cwd`, else the
 /// workspace, when absolute and an existing directory once resolved.
-fn launch_cwd(payload: &Map<String, Value>, workspace: &str) -> Result<Option<String>, ()> {
+pub(super) fn launch_cwd(
+    payload: &Map<String, Value>,
+    workspace: &str,
+) -> Result<Option<String>, ()> {
     let raw = match payload.get("cwd").and_then(Value::as_str) {
         Some(raw) if python_strip(raw).map_err(|_| ())?.is_some() => raw,
         _ => workspace,
@@ -257,6 +273,8 @@ fn launch_cwd(payload: &Map<String, Value>, workspace: &str) -> Result<Option<St
 
 #[path = "hook_direct_local_cli_block.rs"]
 pub(crate) mod block;
+#[path = "hook_direct_local_cli_rule_op.rs"]
+pub(crate) mod rule_op;
 
 #[cfg(test)]
 #[path = "hook_direct_local_cli_tests.rs"]

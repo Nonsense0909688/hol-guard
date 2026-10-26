@@ -141,6 +141,7 @@ mod codex_hook_bridge;
 mod codex_hook_bridge_direct;
 mod codex_hook_bridge_direct_resident;
 mod codex_hook_bridge_transport;
+mod codex_hook_file_identity_op;
 mod codex_hook_identity;
 mod codex_hook_response;
 mod codex_hooks;
@@ -188,6 +189,7 @@ mod consumer_capabilities;
 mod consumer_capability_delta;
 mod consumer_evidence;
 mod consumer_incident;
+mod consumer_outcome;
 mod consumer_result;
 mod consumer_url;
 #[cfg(unix)]
@@ -196,6 +198,7 @@ mod contained_op;
 mod contained_workspace_grant_plan;
 #[cfg(unix)]
 mod contained_workspace_sink;
+mod contained_wrapper_plan_op;
 mod content_sensitivity_op;
 mod context_digest;
 mod context_digest_json;
@@ -272,6 +275,7 @@ mod extension_control_op;
 mod extension_control_prepared_op;
 mod extension_control_preview_op;
 mod extension_control_proof;
+mod extension_coverage_hint;
 #[path = "adapters/detection/gemini_detect.rs"]
 mod gemini_detect;
 mod git_execution_safety_binary;
@@ -293,6 +297,7 @@ mod guard_config_harness;
 mod guard_config_iso;
 mod guard_config_load;
 mod guard_config_managed;
+mod guard_config_resolve;
 mod guard_config_update;
 mod guard_config_update_coerce;
 mod guard_config_update_harness;
@@ -352,13 +357,26 @@ mod guard_store_inventory_vectors_tests;
 mod guard_store_json;
 mod guard_store_lineage;
 mod guard_store_local_cli;
+mod guard_store_local_cli_catalog;
 #[cfg(test)]
 mod guard_store_local_cli_grant_vectors_tests;
 mod guard_store_local_cli_grants;
+mod guard_store_local_cli_inventory;
+mod guard_store_local_cli_inventory_capabilities;
+mod guard_store_local_cli_inventory_rows;
+#[cfg(test)]
+mod guard_store_local_cli_inventory_rows_tests;
+#[cfg(test)]
+mod guard_store_local_cli_inventory_vectors_tests;
+mod guard_store_local_cli_mcp_snapshot;
 #[cfg(test)]
 mod guard_store_local_cli_vectors_tests;
 mod guard_store_local_mcp_declarations;
 mod guard_store_local_mcp_observation;
+mod guard_store_mcp_provider_reads;
+#[cfg(test)]
+mod guard_store_mcp_reads_tests;
+mod guard_store_mcp_workflow_reads;
 mod guard_store_native_receipts;
 #[cfg(test)]
 mod guard_store_native_receipts_tests;
@@ -382,6 +400,7 @@ mod guard_store_policy_source_context;
 mod guard_store_policy_source_context_vectors_tests;
 mod guard_store_policy_source_labels;
 mod guard_store_policy_source_rows;
+mod guard_store_policy_upsert;
 mod guard_store_receipt_analytics;
 mod guard_store_receipt_approval;
 mod guard_store_receipt_decision;
@@ -402,6 +421,7 @@ mod guard_store_state_ops_vectors_tests;
 mod guard_store_storage_maintenance;
 #[cfg(test)]
 mod guard_store_storage_maintenance_vectors_tests;
+mod guard_store_temporary_mcp;
 mod guard_store_tool_call_evidence;
 #[cfg(test)]
 mod guard_store_tool_call_evidence_tests;
@@ -511,6 +531,7 @@ mod inventory_url_redaction_op;
 #[path = "adapters/detection/kimi_detect.rs"]
 mod kimi_detect;
 mod local_cli_grant_op;
+mod local_cli_help;
 mod local_cli_hook_contained;
 mod local_cli_hook_op;
 mod local_cli_identify;
@@ -545,6 +566,7 @@ mod mcp_proxy_decision_tests;
 mod mcp_proxy_decision_vectors_tests;
 mod mcp_proxy_inline_approval;
 mod mcp_proxy_package;
+mod mcp_proxy_package_answer;
 mod mcp_proxy_postclaim;
 mod mcp_proxy_projection;
 #[cfg(test)]
@@ -632,6 +654,7 @@ mod package_policy_resolve_op;
 mod package_posture_op;
 mod package_protect_finalize_op;
 mod package_protect_projection_op;
+mod package_review_plan_op;
 mod persistence_action_class;
 #[path = "adapters/detection/pi_detect.rs"]
 mod pi_detect;
@@ -646,6 +669,8 @@ use guard_policy_bundle::{
     python as policy_bundle_py, time as policy_bundle_time,
 };
 mod policy_bundle_op;
+mod policy_bundle_payload_hash;
+mod policy_bundle_store_identities;
 #[cfg(test)]
 mod policy_bundle_transport_tests;
 mod policy_decision_lookup_op;
@@ -664,6 +689,7 @@ mod policy_runtime_saved;
 mod policy_runtime_saved_reuse;
 mod policy_snapshot_build;
 mod policy_store;
+mod policy_verifier_key_provision;
 mod pre_tool_extension_evidence_op;
 mod project_identity;
 mod prompt_analyze_op;
@@ -696,6 +722,7 @@ mod restricted_pytest_op;
 mod retry_lineage_capture_op;
 mod reviewed_invocation_bindings_op;
 mod rich_command_model_op;
+mod risk_action;
 mod runner_authority_detector;
 mod runner_authority_evaluation;
 mod runner_authority_op;
@@ -706,6 +733,15 @@ mod runner_sync_url;
 mod runtime_artifact_identity_op;
 mod runtime_cli;
 mod runtime_detector_run_op;
+mod runtime_identity;
+mod runtime_identity_launch;
+mod runtime_identity_launch_shebang;
+mod runtime_identity_probe;
+mod runtime_identity_probe_format;
+mod runtime_identity_probe_layout;
+mod runtime_identity_range;
+mod runtime_known_vulnerable;
+mod runtime_known_vulnerable_source;
 mod secrets_cli;
 mod sensitive_request_op;
 #[cfg(all(test, unix))]
@@ -723,6 +759,7 @@ mod signal_projection_receipt;
 #[cfg(test)]
 mod signal_projection_vectors_tests;
 mod skill_directory_identity_op;
+mod skill_document_evidence;
 mod skill_identity_canon;
 mod skill_identity_discovery;
 mod skill_identity_inspect;
@@ -746,7 +783,6 @@ mod totp;
 #[cfg(test)]
 #[path = "../../../test_support/unique_nanos.rs"]
 mod unique_nanos;
-mod verified_npm_op;
 mod verified_read_decision_op;
 mod verified_read_plan_op;
 #[cfg(windows)]
@@ -755,9 +791,17 @@ mod windows_node_build;
 mod windows_pytest;
 #[cfg(windows)]
 mod windows_readonly;
+mod workspace_fix;
+mod workspace_fix_diff;
+mod workspace_fix_fs;
+mod workspace_fix_manifest;
 mod workspace_inventory_files;
 mod workspace_inventory_op;
+mod workspace_mcp_config;
 mod workspace_scan_targets;
+mod workspace_snapshot;
+mod workspace_snapshot_file;
+mod workspace_snapshot_git;
 mod zcode_artifacts;
 #[path = "adapters/detection/zcode_detect.rs"]
 mod zcode_detect;

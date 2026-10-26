@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Container, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ from .case_worker import SubprocessCaseWorker
 from .catalog import CATALOG, WATCH_COMMAND, WATCH_PROMPT, Scenario, catalog_digest, load_catalog
 from .cleanup import cleanup_case_resources
 from .contained_core import request_proofs
+from .decision_coverage import profile_coverage
 from .evidence import assess_case, sha256_bytes
 from .extension_adapters import configure_extension_permission_denial, extension_adapter
 from .fixtures import (
@@ -63,6 +64,7 @@ from .observed_extension import generate_observed_extension
 from .parallel import HostSlots, Lease, LoadGate, run_scheduled, validate_jobs
 from .provider import InferenceRelay, LoopbackCollector
 from .review_fixtures import GITHUB_REVIEW_CASE, GITHUB_STUB_CASES, WORKTREE_CASE, configure_github_review_controls
+from .runtime_cases import stage_runtime_cases
 from .script_cases import stage_script_cases
 from .session_folder import seed_session_folder, session_cwd
 from .source_identity import source_identity
@@ -111,6 +113,24 @@ def case_coverage(
     }
 
 
+def run_coverage(
+    selected: Sequence[Scenario], catalog: Sequence[Scenario], completed: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The catalog this run executed and the declared decisions it reached.
+
+    Built in one place because the progress report and the final report both
+    publish it: a final report that rebuilt only the catalog half would drop
+    the decision coverage every intermediate write had already stated, and the
+    summary renders from the final report alone.
+    """
+    return {
+        **case_coverage(selected, catalog, completed),
+        # Which cases reached the decisions they were written for, so a profile
+        # states the coverage it actually drove rather than the coverage it selected.
+        "decision_paths": profile_coverage(selected, completed),
+    }
+
+
 def run_case(
     scenario: Scenario,
     *,
@@ -139,6 +159,7 @@ def run_case(
     )
     stage_supply_chain(fixture.workspace, scenario.id)
     stage_script_cases(fixture.workspace, scenario.id, fixture.home, fixture.canary)
+    stage_runtime_cases(fixture.root / "guard-home", fixture.workspace, scenario.id)
     seed_session_folder(fixture.home, stage_directory(fixture.root), scenario.id)
     session = session_cwd(fixture.home, fixture.workspace, scenario.id)
     private = fixture.root / "private-evidence"
@@ -562,7 +583,7 @@ def run_suite(
             [scenario.id for scenario in selected if scenario.id in completed],
             superseded=output / "superseded",
         )
-        report["case_coverage"] = case_coverage(selected, catalog, completed)
+        report["case_coverage"] = run_coverage(selected, catalog, completed)
         report["case_retries"] = retries.history
         print(json.dumps({"scenario": scenario.id, **case["assessment"]}), flush=True)
         (output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -640,7 +661,7 @@ def run_suite(
     route_failed()
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     report.setdefault("inference_usage", inference_usage(output / "cases", (), superseded=output / "superseded"))
-    report["case_coverage"] = case_coverage(selected, catalog, completed)
+    report["case_coverage"] = run_coverage(selected, catalog, completed)
     report["stopped_early"] = len(report["cases"]) < len(selected)
     report.update(report_sections(report["cases"]))
     report["pass"] = (

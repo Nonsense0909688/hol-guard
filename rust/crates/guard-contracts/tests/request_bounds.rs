@@ -59,6 +59,7 @@ fn every_declared_bound_fits_one_resident_frame() {
         ARTIFACT_CONTENT_HASH_MAX_BYTES,
         CISCO_PREFLIGHT_MAX_BYTES,
         CLAIM_APPROVAL_REUSE_MAX_BYTES,
+        CODEX_HOOK_FILE_IDENTITY_MAX_BYTES,
         CODEX_HOOK_IDENTITY_MAX_BYTES,
         CODEX_POST_TOOL_OUTPUT_MAX_BYTES,
         CODEX_REQUEST_RESUME_MAX_BYTES,
@@ -68,6 +69,7 @@ fn every_declared_bound_fits_one_resident_frame() {
         COMMAND_POLICY_DECISION_MAX_BYTES,
         COMPOSIO_ROLE_MAX_BYTES,
         COMPOUND_GIT_INSPECTION_MAX_BYTES,
+        CONTAINED_WRAPPER_PLAN_MAX_BYTES,
         CONTEXT_COMPONENT_MAX_BYTES,
         CURSOR_OBSERVER_PROOF_MAX_BYTES,
         DAEMON_HANDLER_MAX_BYTES,
@@ -89,6 +91,7 @@ fn every_declared_bound_fits_one_resident_frame() {
         INVENTORY_SNAPSHOT_DIGEST_MAX_BYTES,
         INVENTORY_SOURCE_EVIDENCE_MAX_BYTES,
         INVENTORY_URL_REDACTION_MAX_REQUEST_BYTES,
+        LOCAL_CLI_HELP_PARSE_MAX_BYTES,
         MCP_CLASSIFICATION_MAX_BYTES,
         MCP_PROXY_DECISION_MAX_BYTES,
         MCP_RUNTIME_EVIDENCE_MAX_BYTES,
@@ -131,7 +134,8 @@ fn every_declared_bound_fits_one_resident_frame() {
 #[test]
 fn every_declared_bound_is_named_above() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let pinned = include_str!("request_bounds.rs");
+    // A Windows checkout may give this file CRLF line endings.
+    let pinned = include_str!("request_bounds.rs").replace("\r\n", "\n");
     let mut found = 0usize;
     for entry in fs::read_dir(&source).expect("contract sources") {
         let path = entry.expect("source entry").path();

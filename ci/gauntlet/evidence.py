@@ -14,6 +14,8 @@ from .bridge_evidence import bridge_calls
 from .business_policy import BUSINESS_CASES, BUSINESS_CLI_CASES, business_policy_error
 from .catalog import Scenario
 from .contained_core import CONTAINMENT_PROFILES, contained_calls, effective_calls, is_contained_deny
+from .decision_coverage import case_coverage as decision_case_coverage
+from .decision_coverage import unexercised_reason
 from .event_exports import public_events as public_events
 from .extension_adapters import extension_adapter
 from .interruptions import case_interruptions, describe
@@ -135,6 +137,7 @@ def assess_case(scenario: Scenario, case: dict[str, Any]) -> dict[str, Any]:
         calls,
         approval_retry=approval_retry_enabled(scenario),
         contained_ok=scenario.contained_ok,
+        benign_exit=frozenset(scenario.benign_exit_commands),
     )
     provider = case["inference"]
     rounds = provider.get("live_rounds", [])
@@ -167,9 +170,15 @@ def assess_case(scenario: Scenario, case: dict[str, Any]) -> dict[str, Any]:
         outcome, reason = "harness-error", ", ".join(errors)
     else:
         outcome, reason = _assess_observed(scenario, case, calls, contained)
+    # A case that names the decisions it exists to drive has to have reached them. Only a pass is
+    # downgraded: a product failure proved itself whatever else the run did or did not cover.
+    paths = decision_case_coverage(scenario, case)
+    if outcome == "pass" and paths["missing"]:
+        outcome, reason = "not-exercised", unexercised_reason(paths)
     return {
         "outcome": outcome,
         "reason": reason,
+        "decision_paths": paths,
         "tool_calls": len(calls),
         "successful_tools": sum(call["is_error"] is False for call in calls),
         "blocked_tools": sum(call["is_error"] is True for call in calls),
