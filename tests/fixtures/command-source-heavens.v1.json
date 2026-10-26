@@ -1585,12 +1585,10 @@
       "command": "heavens delete /users/42 --env prod",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavenss"
+        "command.heavens"
       ],
       "expected_action": "review",
-      "expected_effective_segments": [
-        0
-      ],
+      "expected_effective_segments": [],
       "id": "case-1",
       "rule_id": "command.heavens.write-request"
     },
@@ -1598,12 +1596,10 @@
       "command": "heavens flow checkout.json --env staging",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavenss"
+        "command.heavens"
       ],
       "expected_action": "review",
-      "expected_effective_segments": [
-        0
-      ],
+      "expected_effective_segments": [],
       "id": "case-2",
       "rule_id": "command.heavens.flow-run"
     },
@@ -1611,12 +1607,10 @@
       "command": "heavens bench get /health -n 500 -c 25",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavenss"
+        "command.heavens"
       ],
       "expected_action": "review",
-      "expected_effective_segments": [
-        0
-      ],
+      "expected_effective_segments": [],
       "id": "case-3",
       "rule_id": "command.heavens.bench"
     },
@@ -1624,12 +1618,10 @@
       "command": "heavens get https://staging.example.com/users --insecure",
       "disabled_permissions": [],
       "enabled_extensions": [
-        "command.heavenss"
+        "command.heavens"
       ],
       "expected_action": "review",
-      "expected_effective_segments": [
-        0
-      ],
+      "expected_effective_segments": [],
       "id": "case-4",
       "rule_id": "command.heavens.insecure-tls"
     }
