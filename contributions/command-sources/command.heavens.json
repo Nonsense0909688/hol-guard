@@ -51,7 +51,7 @@
         "risk_tier": "high",
         "safer_guidance": [
           "Send the equivalent GET request first to confirm the target resource and environment.",
-          "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
+          "Run against a dev or staging environment. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
         ],
         "typed_capabilities": []
       },
@@ -384,7 +384,7 @@
         ],
         "safer_alternatives": [
           "Send the equivalent GET request first to confirm the target resource and environment.",
-          "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
+          "Run against a dev or staging environment. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
         ],
         "severity": "high",
         "title": "Heaven write request (POST/PUT/PATCH/DELETE)"
@@ -908,7 +908,7 @@
                 "required_flags": [
                   "--insecure"
                 ],
-                "required_flags_in_all_arguments": false,
+                "required_flags_in_all_arguments": true,
                 "required_option_values": [],
                 "subcommands": [
                   "get",
@@ -982,7 +982,7 @@
                 "required_flags": [
                   "-k"
                 ],
-                "required_flags_in_all_arguments": false,
+                "required_flags_in_all_arguments": true,
                 "required_option_values": [],
                 "subcommands": [
                   "get",
@@ -1331,7 +1331,7 @@
     ],
     "safer_alternatives": [
       "Use GET requests and `heaven compare` to inspect state before any write.",
-      "Target dev or staging, and mark sensitive environments with --protected."
+      "Target dev or staging. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
     ],
     "source": "built-in",
     "version": "1.0.0"
