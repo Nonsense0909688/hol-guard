@@ -56,11 +56,7 @@
               "risk_tier": "high",
               "safer_guidance": [
                 "Send the equivalent GET request first to confirm the target resource and environment.",
-<<<<<<< HEAD
-                "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
-=======
                 "Run against a dev or staging environment. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               ],
               "typed_capabilities": []
             },
@@ -171,17 +167,11 @@
               "description": "Identifies `heaven post|put|patch|delete`, which sends a state-changing HTTP request to the active or specified environment. Protected environments prompt a human, but non-interactive agent sessions bypass that review path. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
-<<<<<<< HEAD
-                "config": {},
-                "matchers": [
-                  {
-=======
                 "op": "any.v1",
                 "config": {},
                 "matchers": [
                   {
                     "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
@@ -242,17 +232,9 @@
                         "patch",
                         "delete"
                       ]
-<<<<<<< HEAD
-                    },
-                    "op": "executable.v1"
-                  }
-                ],
-                "op": "any.v1"
-=======
                     }
                   }
                 ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               },
               "native_capability": null,
               "permission_id": "command.heavens.permission.write-request",
@@ -264,17 +246,11 @@
               "safe_variants": [
                 {
                   "matcher": {
-<<<<<<< HEAD
-                    "config": {},
-                    "matchers": [
-                      {
-=======
                     "op": "any.v1",
                     "config": {},
                     "matchers": [
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -337,17 +313,10 @@
                             "patch",
                             "delete"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -410,17 +379,9 @@
                             "patch",
                             "delete"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      }
-                    ],
-                    "op": "any.v1"
-=======
                         }
                       }
                     ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                   },
                   "title": "Heaven write-request help",
                   "variant_id": "help"
@@ -428,11 +389,7 @@
               ],
               "safer_alternatives": [
                 "Send the equivalent GET request first to confirm the target resource and environment.",
-<<<<<<< HEAD
-                "Run against a dev or staging environment, or mark the target environment with `heaven env set NAME --protected`."
-=======
                 "Run against a dev or staging environment. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               ],
               "severity": "high",
               "title": "Heaven write request (POST/PUT/PATCH/DELETE)"
@@ -445,17 +402,11 @@
               "description": "Identifies `heaven flow FILE.json`, which executes a chain of requests defined in a file, including write methods, with values extracted between steps. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
-<<<<<<< HEAD
-                "config": {},
-                "matchers": [
-                  {
-=======
                 "op": "any.v1",
                 "config": {},
                 "matchers": [
                   {
                     "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
@@ -513,17 +464,9 @@
                       "subcommands": [
                         "flow"
                       ]
-<<<<<<< HEAD
-                    },
-                    "op": "executable.v1"
-                  }
-                ],
-                "op": "any.v1"
-=======
                     }
                   }
                 ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               },
               "native_capability": null,
               "permission_id": "command.heavens.permission.flow-run",
@@ -535,17 +478,11 @@
               "safe_variants": [
                 {
                   "matcher": {
-<<<<<<< HEAD
-                    "config": {},
-                    "matchers": [
-                      {
-=======
                     "op": "any.v1",
                     "config": {},
                     "matchers": [
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -605,17 +542,10 @@
                           "subcommands": [
                             "flow"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -675,17 +605,9 @@
                           "subcommands": [
                             "flow"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      }
-                    ],
-                    "op": "any.v1"
-=======
                         }
                       }
                     ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                   },
                   "title": "Heaven flow-run help",
                   "variant_id": "help"
@@ -706,17 +628,11 @@
               "description": "Identifies `heaven bench`, which sends many concurrent requests to a target and can overload a service or trigger rate limits. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
-<<<<<<< HEAD
-                "config": {},
-                "matchers": [
-                  {
-=======
                 "op": "any.v1",
                 "config": {},
                 "matchers": [
                   {
                     "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
@@ -774,17 +690,9 @@
                       "subcommands": [
                         "bench"
                       ]
-<<<<<<< HEAD
-                    },
-                    "op": "executable.v1"
-                  }
-                ],
-                "op": "any.v1"
-=======
                     }
                   }
                 ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               },
               "native_capability": null,
               "permission_id": "command.heavens.permission.bench",
@@ -796,17 +704,11 @@
               "safe_variants": [
                 {
                   "matcher": {
-<<<<<<< HEAD
-                    "config": {},
-                    "matchers": [
-                      {
-=======
                     "op": "any.v1",
                     "config": {},
                     "matchers": [
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -866,17 +768,10 @@
                           "subcommands": [
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -936,17 +831,9 @@
                           "subcommands": [
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      }
-                    ],
-                    "op": "any.v1"
-=======
                         }
                       }
                     ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                   },
                   "title": "Heaven bench help",
                   "variant_id": "help"
@@ -967,17 +854,11 @@
               "description": "Identifies Heaven commands run with `--insecure` or `-k`, which skips TLS certificate verification and exposes the request and any credentials to interception. exec and xargs launches are blocked by Guard's wrapper floor.",
               "family": null,
               "matcher": {
-<<<<<<< HEAD
-                "config": {},
-                "matchers": [
-                  {
-=======
                 "op": "any.v1",
                 "config": {},
                 "matchers": [
                   {
                     "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
@@ -1032,11 +913,7 @@
                       "required_flags": [
                         "--insecure"
                       ],
-<<<<<<< HEAD
-                      "required_flags_in_all_arguments": false,
-=======
                       "required_flags_in_all_arguments": true,
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                       "required_option_values": [],
                       "subcommands": [
                         "get",
@@ -1052,17 +929,10 @@
                         "flow",
                         "bench"
                       ]
-<<<<<<< HEAD
-                    },
-                    "op": "executable.v1"
-                  },
-                  {
-=======
                     }
                   },
                   {
                     "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                     "config": {
                       "allow_leading_options": false,
                       "executables": [
@@ -1117,11 +987,7 @@
                       "required_flags": [
                         "-k"
                       ],
-<<<<<<< HEAD
-                      "required_flags_in_all_arguments": false,
-=======
                       "required_flags_in_all_arguments": true,
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                       "required_option_values": [],
                       "subcommands": [
                         "get",
@@ -1137,17 +1003,9 @@
                         "flow",
                         "bench"
                       ]
-<<<<<<< HEAD
-                    },
-                    "op": "executable.v1"
-                  }
-                ],
-                "op": "any.v1"
-=======
                     }
                   }
                 ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
               },
               "native_capability": null,
               "permission_id": "command.heavens.permission.insecure-tls",
@@ -1159,17 +1017,11 @@
               "safe_variants": [
                 {
                   "matcher": {
-<<<<<<< HEAD
-                    "config": {},
-                    "matchers": [
-                      {
-=======
                     "op": "any.v1",
                     "config": {},
                     "matchers": [
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -1241,17 +1093,10 @@
                             "flow",
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -1323,17 +1168,10 @@
                             "flow",
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -1405,17 +1243,10 @@
                             "flow",
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      },
-                      {
-=======
                         }
                       },
                       {
                         "op": "executable.v1",
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                         "config": {
                           "allow_leading_options": false,
                           "executables": [
@@ -1487,17 +1318,9 @@
                             "flow",
                             "bench"
                           ]
-<<<<<<< HEAD
-                        },
-                        "op": "executable.v1"
-                      }
-                    ],
-                    "op": "any.v1"
-=======
                         }
                       }
                     ]
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
                   },
                   "title": "Heaven insecure-tls help",
                   "variant_id": "help"
@@ -1513,11 +1336,7 @@
           ],
           "safer_alternatives": [
             "Use GET requests and `heaven compare` to inspect state before any write.",
-<<<<<<< HEAD
-            "Target dev or staging, and mark sensitive environments with --protected."
-=======
             "Target dev or staging. The `--protected` prompt is interactive only and does not gate noninteractive agent runs."
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
           ],
           "source": "built-in",
           "version": "1.0.0"
