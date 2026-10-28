@@ -1337,8 +1337,4 @@
     "version": "1.0.0"
   },
   "schema": "guard.command-extension-source.v1"
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 398a92150 (fix: sync heavens command source fixture)
